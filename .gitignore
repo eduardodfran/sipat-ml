@@ -1,0 +1,57 @@
+.env
+.env.*
+!.env.example
+!processing/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+site/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Local databases and cache files
+*.db
+*.sqlite
+*.sqlite3
+
+# Model and generated artifacts
+weights/*.pt
+weights/*.onnx
+weights/*.engine
+
+# Notebook checkpoints
+.ipynb_checkpoints/
