@@ -9,6 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY processing/requirements.txt .
+
+# Install CPU-only torch first to avoid pulling CUDA (14GB+)
+RUN pip3 install --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    torchvision --index-url https://download.pytorch.org/whl/cpu
+
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY processing/ ./processing/

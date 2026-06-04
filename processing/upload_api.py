@@ -5,7 +5,7 @@ from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
-from common import (
+from .common import (
     CONTAINER_NAME,
     SAS_EXPIRY_MINUTES,
     _get_blob_service,

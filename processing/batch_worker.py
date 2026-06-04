@@ -22,7 +22,7 @@ from ultralytics import YOLO
 from storage3.utils import StorageException
 from supabase import Client, create_client
 
-from clustering import cluster_pothole_detections
+from .clustering import cluster_pothole_detections
 
 CURRENT_DIR = Path(__file__).resolve().parent
 ENV_PATH = CURRENT_DIR.parent / ".env"

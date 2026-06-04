@@ -6,8 +6,8 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from common import _get_supabase, _validate_token, SUPABASE_URL, SERVICE_KEY
-from upload_api import router as upload_router
+from .common import _get_supabase, _validate_token, SUPABASE_URL, SERVICE_KEY
+from .upload_api import router as upload_router
 
 app = FastAPI(title="SIPAT Process API")
 
