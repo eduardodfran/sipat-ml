@@ -39,7 +39,7 @@ class RideInfo(BaseModel):
 
 
 def _run_process(ride_id: str) -> None:
-    from batch_worker import _build_supabase_client, _friendly_error_message, _mark_failed, _process_ride
+    from .batch_worker import _build_supabase_client, _friendly_error_message, _mark_failed, _process_ride
 
     try:
         supabase = _build_supabase_client()
