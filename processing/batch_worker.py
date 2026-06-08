@@ -22,7 +22,7 @@ from ultralytics import YOLO
 from storage3.utils import StorageException
 from supabase import Client, create_client
 
-from utils.geo_sync import interpolate_coordinate_at_time
+from .utils.geo_sync import interpolate_coordinate_at_time
 
 from .clustering import cluster_pothole_detections
 
