@@ -6,6 +6,7 @@ import numpy as np
 import re
 from urllib.parse import urlparse
 from ultralytics import YOLO
+from utils.geo_sync import interpolate_coordinate_at_time
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from postgrest.exceptions import APIError
@@ -134,12 +135,6 @@ print("🔑 Supabase client initialized using service role key")
 model = YOLO('../weights/best.pt')
 
 
-def get_coordinates_at_time(gps_data, current_time):
-    """Finds the closest matching GPS coordinate for a given video timestamp."""
-    closest_match = min(gps_data, key=lambda x: abs(x['timestamp_seconds'] - current_time))
-    return closest_match['lat'], closest_match['lng']
-
-
 def run_processing_pipeline(video_file_path, gps_json_path, ride_id, user_id):
     # Safety check for required mock input files
     if not os.path.exists(gps_json_path):
@@ -183,7 +178,7 @@ def run_processing_pipeline(video_file_path, gps_json_path, ride_id, user_id):
 
         for result in results:
             if len(result.boxes) > 0:
-                lat, lng = get_coordinates_at_time(gps_data, timestamp_seconds)
+                lat, lng = interpolate_coordinate_at_time(gps_data, timestamp_seconds)
                 raw_detections_batch.append({
                     "ride_id": ride_id,
                     "user_id": user_id,
