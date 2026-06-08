@@ -22,6 +22,8 @@ from ultralytics import YOLO
 from storage3.utils import StorageException
 from supabase import Client, create_client
 
+from utils.geo_sync import interpolate_coordinate_at_time
+
 from .clustering import cluster_pothole_detections
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -517,18 +519,17 @@ def _ipm_pixel_to_offset(
 
 def _project_detection_to_gps(
     gps_index: GPSIndex,
+    gps_data: list[dict[str, Any]],
     current_time: float,
     dx_meters: float,
     dy_meters: float,
 ) -> tuple[float, float]:
-    idx, base_lat, base_lng, heading = _interpolated_gps_sample(
-        gps_index, current_time
-    )
+    base_lat, base_lng = interpolate_coordinate_at_time(gps_data, current_time)
+    idx = _closest_gps_index(gps_index, current_time)
+    heading = _estimate_heading_degrees(gps_index, idx)
     if dx_meters == 0.0 and dy_meters == 0.0:
         return base_lat, base_lng
 
-    if heading is None:
-        heading = _estimate_heading_degrees(gps_index, idx)
     if heading is None:
         return base_lat, base_lng
 
@@ -587,6 +588,7 @@ def _build_raw_detection_batch(
                     dx_meters, dy_meters = _ipm_pixel_to_offset(bottom_center, ipm_context)
                     lat, lng = _project_detection_to_gps(
                         gps_index,
+                        gps_data,
                         timestamp_seconds,
                         dx_meters,
                         dy_meters,
