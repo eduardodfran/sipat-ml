@@ -189,7 +189,7 @@ def run_processing_pipeline(video_file_path, gps_json_path, ride_id, user_id):
                     "user_id": user_id,
                     "lat": lat,
                     "lng": lng,
-                    "video_timestamp": round(timestamp_seconds, 2)
+                    "video_timestamp": timestamp_seconds
                 })
 
     cap.release()

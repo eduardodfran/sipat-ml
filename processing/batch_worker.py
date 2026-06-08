@@ -565,7 +565,6 @@ def _build_raw_detection_batch(
             frames_per_second = 30.0
 
         raw_detections_batch: list[dict[str, Any]] = []
-        frame_index = 0
         ipm_context: IPMContext | None = None
 
         while capture.isOpened():
@@ -573,7 +572,8 @@ def _build_raw_detection_batch(
             if not success:
                 break
 
-            timestamp_seconds = frame_index / frames_per_second
+            current_frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
+            timestamp_seconds = current_frame_index / frames_per_second
             if ipm_context is None:
                 ipm_context = _build_ipm_context(frame.shape[1], frame.shape[0])
             results = model(frame, conf=0.4, verbose=False)
@@ -597,11 +597,9 @@ def _build_raw_detection_batch(
                             "user_id": user_id,
                             "lat": lat,
                             "lng": lng,
-                            "video_timestamp": round(timestamp_seconds, 2),
+                            "video_timestamp": timestamp_seconds,
                         }
                     )
-
-            frame_index += 1
 
         return raw_detections_batch
     finally:
