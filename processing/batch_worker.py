@@ -636,11 +636,19 @@ def _haversine_distance_meters(
     return float(2.0 * EARTH_RADIUS_METERS * np.arcsin(np.sqrt(a)))
 
 
+def _compute_worst_severity(total_hits: int) -> str:
+    if total_hits >= 20:
+        return "Severe"
+    if total_hits >= 6:
+        return "Moderate"
+    return "Minor"
+
+
 def _fetch_verified_potholes(supabase: Client) -> list[dict[str, Any]]:
     response = (
         supabase.schema("public")
         .from_("verified_potholes")
-        .select("id, lat, lng, detection_count, status, updated_at")
+        .select("id, consolidated_latitude, consolidated_longitude, worst_severity, total_detection_hits, status, updated_at")
         .execute()
     )
     return response.data or []
@@ -656,8 +664,8 @@ def _find_matching_verified_pothole(
     closest_distance = merge_radius_meters
 
     for pothole in existing_potholes:
-        lat = pothole.get("lat")
-        lng = pothole.get("lng")
+        lat = pothole.get("consolidated_latitude")
+        lng = pothole.get("consolidated_longitude")
         if lat is None or lng is None:
             continue
 
@@ -692,7 +700,7 @@ def _sync_verified_potholes(
     for pothole in clustered_potholes:
         lat = float(pothole["lat"])
         lng = float(pothole["lng"])
-        detection_count = int(pothole.get("detection_count") or 0)
+        new_hits = int(pothole.get("detection_count") or 0)
         matched_pothole = _find_matching_verified_pothole(
             existing_potholes,
             lat,
@@ -700,34 +708,41 @@ def _sync_verified_potholes(
         )
 
         if matched_pothole:
-            current_count = int(matched_pothole.get("detection_count") or 0)
-            updated_count = current_count + detection_count
+            current_hits = int(matched_pothole.get("total_detection_hits") or 0)
+            updated_hits = current_hits + new_hits
+            updated_severity = _compute_worst_severity(updated_hits)
             supabase.schema("public").from_("verified_potholes").update(
                 {
-                    "detection_count": updated_count,
+                    "total_detection_hits": updated_hits,
+                    "worst_severity": updated_severity,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
             ).eq("id", matched_pothole["id"]).execute()
-            matched_pothole["detection_count"] = updated_count
+            matched_pothole["total_detection_hits"] = updated_hits
+            matched_pothole["worst_severity"] = updated_severity
             matched_pothole["updated_at"] = datetime.now(timezone.utc).isoformat()
             touched_potholes += 1
             continue
 
+        total_hits = new_hits
+        severity = _compute_worst_severity(total_hits)
         supabase.schema("public").from_("verified_potholes").insert(
             {
                 "ride_id": ride_id,
-                "lat": lat,
-                "lng": lng,
-                "detection_count": detection_count,
+                "consolidated_latitude": lat,
+                "consolidated_longitude": lng,
+                "worst_severity": severity,
+                "total_detection_hits": total_hits,
                 "status": "queued",
             }
         ).execute()
         existing_potholes.append(
             {
                 "id": None,
-                "lat": lat,
-                "lng": lng,
-                "detection_count": detection_count,
+                "consolidated_latitude": lat,
+                "consolidated_longitude": lng,
+                "worst_severity": severity,
+                "total_detection_hits": total_hits,
                 "status": "queued",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
