@@ -585,8 +585,11 @@ def _build_raw_detection_batch(
                     continue
 
                 for _box in result.boxes:
-                    bbox = _box.xyxyn[0].tolist()
-                    severity = calculate_severity(bbox)
+                    try:
+                        bbox = _box.xyxyn[0].tolist()
+                        severity = calculate_severity(bbox)
+                    except Exception:
+                        severity = "Minor"
 
                     bottom_center = _bottom_center_point(_box)
                     dx_meters, dy_meters = _ipm_pixel_to_offset(bottom_center, ipm_context)
