@@ -22,6 +22,7 @@ from ultralytics import YOLO
 from storage3.utils import StorageException
 from supabase import Client, create_client
 
+from .utils.damage_severity import calculate_severity
 from .utils.geo_sync import interpolate_coordinate_at_time
 
 from .clustering import cluster_pothole_detections
@@ -584,6 +585,9 @@ def _build_raw_detection_batch(
                     continue
 
                 for _box in result.boxes:
+                    bbox = _box.xyxyn[0].tolist()
+                    severity = calculate_severity(bbox)
+
                     bottom_center = _bottom_center_point(_box)
                     dx_meters, dy_meters = _ipm_pixel_to_offset(bottom_center, ipm_context)
                     lat, lng = _project_detection_to_gps(
@@ -600,6 +604,7 @@ def _build_raw_detection_batch(
                             "lat": lat,
                             "lng": lng,
                             "video_timestamp": timestamp_seconds,
+                            "severity": severity,
                         }
                     )
 
