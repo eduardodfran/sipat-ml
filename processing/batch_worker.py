@@ -1,5 +1,6 @@
 import base64
 import subprocess
+import urllib.request
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -235,23 +236,24 @@ def _download_object_to_temp_folder(
     return local_path
 
 
-ANNOTATED_FRAMES_CONTAINER = "raw-road-data"
+ANNOTATED_FRAMES_BUCKET = "detected-images"
 
 
 def _upload_annotated_frame(
     frame_bytes: bytes,
     ride_id: str,
     timestamp_seconds: float,
+    supabase: Client,
 ) -> str:
-    blob_service = _get_blob_service()
-    blob_name = f"annotated-frames/{ride_id}/{timestamp_seconds:.3f}.jpg"
-    blob_client = blob_service.get_blob_client(
-        container=ANNOTATED_FRAMES_CONTAINER, blob=blob_name
-    )
-    blob_client.upload_blob(
-        frame_bytes, overwrite=True, content_type="image/jpeg"
-    )
-    return blob_client.url
+    object_path = f"annotated-frames/{ride_id}/{timestamp_seconds:.3f}.jpg"
+    url = f"{SUPABASE_URL}/storage/v1/object/{ANNOTATED_FRAMES_BUCKET}/{object_path}?upsert=true"
+    headers = {
+        "Authorization": f"Bearer {SERVICE_KEY}",
+        "Content-Type": "image/jpeg",
+    }
+    req = urllib.request.Request(url, data=frame_bytes, headers=headers, method="POST")
+    urllib.request.urlopen(req)
+    return f"{SUPABASE_URL}/storage/v1/object/public/{ANNOTATED_FRAMES_BUCKET}/{object_path}"
 
 
 def _load_yolo_model() -> YOLO:
@@ -571,6 +573,7 @@ def _build_raw_detection_batch(
     gps_path: Path,
     ride_id: str,
     user_id: str | None,
+    supabase: Client,
 ) -> list[dict[str, Any]]:
     model = _load_yolo_model()
     gps_data = _load_gps_data(gps_path)
@@ -587,12 +590,17 @@ def _build_raw_detection_batch(
 
         raw_detections_batch: list[dict[str, Any]] = []
         ipm_context: IPMContext | None = None
+        frame_count = 0
+        detection_count = 0
+        last_upload_time = -1.0
+        upload_interval = 1.0
 
         while capture.isOpened():
             success, frame = capture.read()
             if not success:
                 break
 
+            frame_count += 1
             current_frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
             timestamp_seconds = current_frame_index / frames_per_second
             if ipm_context is None:
@@ -603,13 +611,21 @@ def _build_raw_detection_batch(
                 if not getattr(result, "boxes", None):
                     continue
 
-                try:
-                    annotated_frame = result.plot()
-                    _, encoded_frame = cv2.imencode(".jpg", annotated_frame)
-                    image_url = _upload_annotated_frame(
-                        encoded_frame.tobytes(), ride_id, timestamp_seconds
-                    )
-                except Exception:
+                detection_count += 1
+
+                if timestamp_seconds - last_upload_time >= upload_interval:
+                    try:
+                        annotated_frame = result.plot()
+                        _, encoded_frame = cv2.imencode(".jpg", annotated_frame)
+                        image_url = _upload_annotated_frame(
+                            encoded_frame.tobytes(), ride_id, timestamp_seconds, supabase
+                        )
+                        last_upload_time = timestamp_seconds
+                        print(f"Uploaded annotated frame: {image_url}")
+                    except Exception as upload_err:
+                        print(f"Failed to upload annotated frame: {upload_err}")
+                        image_url = None
+                else:
                     image_url = None
 
                 for _box in result.boxes:
@@ -640,6 +656,7 @@ def _build_raw_detection_batch(
                         }
                     )
 
+        print(f"Processed {frame_count} frames, {detection_count} detections with boxes")
         return raw_detections_batch
     finally:
         capture.release()
@@ -820,6 +837,7 @@ def _process_ride(supabase: Client, ride: dict[str, Any]) -> dict[str, Any]:
             gps_path=gps_local_path,
             ride_id=ride_id,
             user_id=str(user_id) if user_id is not None else None,
+            supabase=supabase,
         )
         _insert_raw_detections(supabase, raw_batch)
         _sync_verified_potholes(supabase, raw_batch, ride_id)
