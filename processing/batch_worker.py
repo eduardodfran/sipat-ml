@@ -235,6 +235,25 @@ def _download_object_to_temp_folder(
     return local_path
 
 
+ANNOTATED_FRAMES_CONTAINER = "raw-road-data"
+
+
+def _upload_annotated_frame(
+    frame_bytes: bytes,
+    ride_id: str,
+    timestamp_seconds: float,
+) -> str:
+    blob_service = _get_blob_service()
+    blob_name = f"annotated-frames/{ride_id}/{timestamp_seconds:.3f}.jpg"
+    blob_client = blob_service.get_blob_client(
+        container=ANNOTATED_FRAMES_CONTAINER, blob=blob_name
+    )
+    blob_client.upload_blob(
+        frame_bytes, overwrite=True, content_type="image/jpeg"
+    )
+    return blob_client.url
+
+
 def _load_yolo_model() -> YOLO:
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"YOLO weights not found at: {MODEL_PATH}")
@@ -584,6 +603,15 @@ def _build_raw_detection_batch(
                 if not getattr(result, "boxes", None):
                     continue
 
+                try:
+                    annotated_frame = result.plot()
+                    _, encoded_frame = cv2.imencode(".jpg", annotated_frame)
+                    image_url = _upload_annotated_frame(
+                        encoded_frame.tobytes(), ride_id, timestamp_seconds
+                    )
+                except Exception:
+                    image_url = None
+
                 for _box in result.boxes:
                     try:
                         bbox = _box.xyxyn[0].tolist()
@@ -608,6 +636,7 @@ def _build_raw_detection_batch(
                             "lng": lng,
                             "video_timestamp": timestamp_seconds,
                             "severity": severity,
+                            "image_url": image_url,
                         }
                     )
 
