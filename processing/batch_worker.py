@@ -702,7 +702,7 @@ def _fetch_verified_potholes(supabase: Client) -> list[dict[str, Any]]:
     response = (
         supabase.schema("public")
         .from_("verified_potholes")
-        .select("id, consolidated_latitude, consolidated_longitude, worst_severity, total_detection_hits, status, updated_at")
+        .select("id, consolidated_latitude, consolidated_longitude, worst_severity, total_detection_hits, image_url, status, updated_at")
         .execute()
     )
     return response.data or []
@@ -755,6 +755,7 @@ def _sync_verified_potholes(
         lat = float(pothole["lat"])
         lng = float(pothole["lng"])
         new_hits = int(pothole.get("detection_count") or 0)
+        image_url = pothole.get("image_url")
         matched_pothole = _find_matching_verified_pothole(
             existing_potholes,
             lat,
@@ -765,30 +766,38 @@ def _sync_verified_potholes(
             current_hits = int(matched_pothole.get("total_detection_hits") or 0)
             updated_hits = current_hits + new_hits
             updated_severity = _compute_worst_severity(updated_hits)
+            update_payload = {
+                "total_detection_hits": updated_hits,
+                "worst_severity": updated_severity,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if image_url is not None:
+                update_payload["image_url"] = image_url
             supabase.schema("public").from_("verified_potholes").update(
-                {
-                    "total_detection_hits": updated_hits,
-                    "worst_severity": updated_severity,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+                update_payload
             ).eq("id", matched_pothole["id"]).execute()
             matched_pothole["total_detection_hits"] = updated_hits
             matched_pothole["worst_severity"] = updated_severity
             matched_pothole["updated_at"] = datetime.now(timezone.utc).isoformat()
+            if image_url is not None:
+                matched_pothole["image_url"] = image_url
             touched_potholes += 1
             continue
 
         total_hits = new_hits
         severity = _compute_worst_severity(total_hits)
+        insert_payload = {
+            "ride_id": ride_id,
+            "consolidated_latitude": lat,
+            "consolidated_longitude": lng,
+            "worst_severity": severity,
+            "total_detection_hits": total_hits,
+            "status": "queued",
+        }
+        if image_url is not None:
+            insert_payload["image_url"] = image_url
         supabase.schema("public").from_("verified_potholes").insert(
-            {
-                "ride_id": ride_id,
-                "consolidated_latitude": lat,
-                "consolidated_longitude": lng,
-                "worst_severity": severity,
-                "total_detection_hits": total_hits,
-                "status": "queued",
-            }
+            insert_payload
         ).execute()
         existing_potholes.append(
             {
@@ -797,6 +806,7 @@ def _sync_verified_potholes(
                 "consolidated_longitude": lng,
                 "worst_severity": severity,
                 "total_detection_hits": total_hits,
+                "image_url": image_url,
                 "status": "queued",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }

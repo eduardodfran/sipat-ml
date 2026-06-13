@@ -32,11 +32,17 @@ def cluster_pothole_detections(raw_data_list, max_distance_meters=3.0, min_detec
         centroid_lat = cluster_subset['lat'].mean()
         centroid_lng = cluster_subset['lng'].mean()
         total_hits = len(cluster_subset)
+        image_url = None
+        if 'image_url' in cluster_subset.columns:
+            non_null = cluster_subset['image_url'].dropna()
+            if len(non_null) > 0:
+                image_url = non_null.iloc[0]
         
         cleaned_potholes.append({
             "lat": round(centroid_lat, 6),
             "lng": round(centroid_lng, 6),
-            "detection_count": total_hits
+            "detection_count": total_hits,
+            "image_url": image_url,
         })
         
     return cleaned_potholes
