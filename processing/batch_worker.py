@@ -1,6 +1,5 @@
 import base64
 import subprocess
-import urllib.request
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -246,13 +245,11 @@ def _upload_annotated_frame(
     supabase: Client,
 ) -> str:
     object_path = f"annotated-frames/{ride_id}/{timestamp_seconds:.3f}.jpg"
-    url = f"{SUPABASE_URL}/storage/v1/object/{ANNOTATED_FRAMES_BUCKET}/{object_path}?upsert=true"
-    headers = {
-        "Authorization": f"Bearer {SERVICE_KEY}",
-        "Content-Type": "image/jpeg",
-    }
-    req = urllib.request.Request(url, data=frame_bytes, headers=headers, method="POST")
-    urllib.request.urlopen(req)
+    supabase.storage.from_(ANNOTATED_FRAMES_BUCKET).upload(
+        path=object_path,
+        file=frame_bytes,
+        file_options={"content-type": "image/jpeg", "upsert": "true"},
+    )
     return f"{SUPABASE_URL}/storage/v1/object/public/{ANNOTATED_FRAMES_BUCKET}/{object_path}"
 
 
