@@ -34,6 +34,7 @@ load_dotenv(dotenv_path=ENV_PATH)
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
 EARTH_RADIUS_METERS = 6371008.8
 MERGE_RADIUS_METERS = 3.0
+STATIONARY_THRESHOLD_METERS = 0.5
 DEFAULT_PIXELS_PER_METER = 100.0
 DEFAULT_ROAD_WIDTH_METERS = 6.0
 DEFAULT_LOOKAHEAD_METERS = 30.0
@@ -406,6 +407,17 @@ def _bearing_degrees(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> 
     return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
 
 
+def _haversine_distance_meters(
+    lat_a: float, lng_a: float, lat_b: float, lng_b: float
+) -> float:
+    lat_a_rad = math.radians(lat_a)
+    lat_b_rad = math.radians(lat_b)
+    dlat = math.radians(lat_b - lat_a)
+    dlng = math.radians(lng_b - lng_a)
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat_a_rad) * math.cos(lat_b_rad) * math.sin(dlng / 2) ** 2
+    return 2 * EARTH_RADIUS_METERS * math.asin(math.sqrt(a))
+
+
 def _estimate_heading_degrees(gps_index: GPSIndex, idx: int) -> float | None:
     sample_count = len(gps_index.latlng)
     if sample_count < 2:
@@ -420,7 +432,7 @@ def _estimate_heading_degrees(gps_index: GPSIndex, idx: int) -> float | None:
 
     lat_a, lng_a = gps_index.latlng[start_idx]
     lat_b, lng_b = gps_index.latlng[end_idx]
-    if lat_a == lat_b and lng_a == lng_b:
+    if _haversine_distance_meters(lat_a, lng_a, lat_b, lng_b) < STATIONARY_THRESHOLD_METERS:
         return None
 
     return _bearing_degrees(lat_a, lng_a, lat_b, lng_b)
