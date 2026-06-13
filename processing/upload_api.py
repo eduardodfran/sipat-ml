@@ -71,6 +71,12 @@ def _delete_blobs(paths: list[str]) -> None:
             pass
 
 
+def _validate_path_ownership(user_id: str, paths: list[str]) -> None:
+    for path in paths:
+        if not path.startswith(f"{user_id}/"):
+            raise HTTPException(status_code=403, detail="Path does not belong to you")
+
+
 @router.post("/init", response_model=InitUploadResponse)
 async def init_upload(request: InitUploadRequest, authorization: str = Header(None)):
     auth = _validate_token(authorization)
@@ -100,6 +106,8 @@ async def complete_upload(
     auth = _validate_token(authorization)
     user_id = auth["user_id"]
 
+    _validate_path_ownership(user_id, [request.video_path, request.gps_path])
+
     blob_service = _get_blob_service()
     for path, label in [(request.video_path, "video"), (request.gps_path, "GPS")]:
         bc = blob_service.get_blob_client(container=CONTAINER_NAME, blob=path)
@@ -128,6 +136,8 @@ async def complete_upload(
 async def abort_upload(
     request: AbortUploadRequest, authorization: str = Header(None)
 ):
-    _validate_token(authorization)
+    auth = _validate_token(authorization)
+    user_id = auth["user_id"]
+    _validate_path_ownership(user_id, [request.video_path, request.gps_path])
     _delete_blobs([request.video_path, request.gps_path])
     return {"status": "ok", "message": "Uploaded blobs deleted"}

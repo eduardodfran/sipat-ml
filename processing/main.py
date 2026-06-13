@@ -114,12 +114,19 @@ async def list_rides(authorization: str = Header(None)):
 
 
 @app.get("/rides/{ride_id}")
-async def get_ride(ride_id: str):
+async def get_ride(ride_id: str, authorization: str = Header(None)):
+    auth = _validate_token(authorization)
+    user_id = auth.get("user_id") or auth.get("sub")
+
     supabase = _get_supabase()
     response = supabase.table("rides_metadata").select("*").eq("id", ride_id).execute()
     rows = response.data or []
     if not rows:
         raise HTTPException(status_code=404, detail="Ride not found")
+
+    if rows[0].get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Not your ride")
+
     return {"ride": rows[0]}
 
 
