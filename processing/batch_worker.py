@@ -407,17 +407,6 @@ def _bearing_degrees(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> 
     return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
 
 
-def _haversine_distance_meters(
-    lat_a: float, lng_a: float, lat_b: float, lng_b: float
-) -> float:
-    lat_a_rad = math.radians(lat_a)
-    lat_b_rad = math.radians(lat_b)
-    dlat = math.radians(lat_b - lat_a)
-    dlng = math.radians(lng_b - lng_a)
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat_a_rad) * math.cos(lat_b_rad) * math.sin(dlng / 2) ** 2
-    return 2 * EARTH_RADIUS_METERS * math.asin(math.sqrt(a))
-
-
 def _estimate_heading_degrees(gps_index: GPSIndex, idx: int) -> float | None:
     sample_count = len(gps_index.latlng)
     if sample_count < 2:
