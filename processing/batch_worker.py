@@ -34,7 +34,7 @@ load_dotenv(dotenv_path=ENV_PATH)
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
 EARTH_RADIUS_METERS = 6371008.8
 MERGE_RADIUS_METERS = 3.0
-STATIONARY_THRESHOLD_METERS = 0.5
+STATIONARY_THRESHOLD_METERS = 3.0
 DEFAULT_PIXELS_PER_METER = 100.0
 DEFAULT_ROAD_WIDTH_METERS = 6.0
 DEFAULT_LOOKAHEAD_METERS = 30.0
@@ -534,6 +534,12 @@ def _ipm_pixel_to_offset(
 
     dx_meters = (float(x_bev) - (ipm_context.output_width_px / 2.0)) / ipm_context.pixels_per_meter
     dy_meters = (ipm_context.output_height_px - float(y_bev)) / ipm_context.pixels_per_meter
+
+    max_lateral = ipm_context.output_width_px / (2.0 * ipm_context.pixels_per_meter)
+    max_forward = ipm_context.output_height_px / ipm_context.pixels_per_meter
+    dx_meters = max(-max_lateral, min(max_lateral, dx_meters))
+    dy_meters = max(0.0, min(max_forward, dy_meters))
+
     return dx_meters, dy_meters
 
 
