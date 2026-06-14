@@ -40,6 +40,17 @@ DEFAULT_PIXELS_PER_METER = 100.0
 DEFAULT_ROAD_WIDTH_METERS = 6.0
 DEFAULT_LOOKAHEAD_METERS = 30.0
 
+SEVERITY_MINOR_AREA_M2 = 0.03
+SEVERITY_MODERATE_AREA_M2 = 0.12
+
+
+def _phys_area_to_severity(area_m2: float | None) -> str:
+    if area_m2 is None or area_m2 < SEVERITY_MINOR_AREA_M2:
+        return "Minor"
+    if area_m2 < SEVERITY_MODERATE_AREA_M2:
+        return "Moderate"
+    return "Severe"
+
 SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").strip()
 SERVICE_KEY = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
 AZURE_CONNECTION_STRING = (os.getenv("AZURE_STORAGE_CONNECTION_STRING") or "").strip()
@@ -665,8 +676,22 @@ def _build_raw_detection_batch(
                     try:
                         bbox = _box.xyxyn[0].tolist()
                         severity = calculate_severity(bbox)
+                        x1, y1, x2, y2 = bbox
+                        corners = np.array([[
+                            [x1 * ipm_context.frame_width, y1 * ipm_context.frame_height],
+                            [x2 * ipm_context.frame_width, y1 * ipm_context.frame_height],
+                            [x2 * ipm_context.frame_width, y2 * ipm_context.frame_height],
+                            [x1 * ipm_context.frame_width, y2 * ipm_context.frame_height],
+                        ]], dtype=np.float32)
+                        bev_corners = cv2.perspectiveTransform(corners, ipm_context.matrix)[0]
+                        bev_w = max(0.0, np.max(bev_corners[:, 0]) - np.min(bev_corners[:, 0]))
+                        bev_h = max(0.0, np.max(bev_corners[:, 1]) - np.min(bev_corners[:, 1]))
+                        phys_area_m2 = (bev_w / ipm_context.pixels_per_meter) * (bev_h / ipm_context.pixels_per_meter)
+                        if not np.isfinite(phys_area_m2) or phys_area_m2 < 0:
+                            phys_area_m2 = 0.0
                     except Exception:
                         severity = "Minor"
+                        phys_area_m2 = 0.0
 
                     bottom_center = _bottom_center_point(_box)
                     dx_meters, dy_meters = _ipm_pixel_to_offset(bottom_center, ipm_context)
@@ -685,6 +710,7 @@ def _build_raw_detection_batch(
                             "lng": lng,
                             "video_timestamp": timestamp_seconds,
                             "severity": severity,
+                            "phys_area_m2": phys_area_m2,
                             "image_url": image_url,
                         }
                     )
@@ -788,6 +814,8 @@ def _sync_verified_potholes(
         lat = float(pothole["lat"])
         lng = float(pothole["lng"])
         new_hits = int(pothole.get("detection_count") or 0)
+        max_area_m2 = pothole.get("max_area_m2")
+        new_severity = _phys_area_to_severity(max_area_m2)
         matched_pothole = _find_matching_verified_pothole(
             existing_potholes,
             lat,
@@ -797,7 +825,9 @@ def _sync_verified_potholes(
         if matched_pothole:
             current_hits = int(matched_pothole.get("total_detection_hits") or 0)
             updated_hits = current_hits + new_hits
-            updated_severity = _compute_worst_severity(updated_hits)
+            current_severity = matched_pothole.get("worst_severity") or "Minor"
+            severity_order = {"Minor": 0, "Moderate": 1, "Severe": 2}
+            updated_severity = new_severity if severity_order.get(new_severity, 0) >= severity_order.get(current_severity, 0) else current_severity
             update_payload = {
                 "total_detection_hits": updated_hits,
                 "worst_severity": updated_severity,
@@ -813,7 +843,7 @@ def _sync_verified_potholes(
             continue
 
         total_hits = new_hits
-        severity = _compute_worst_severity(total_hits)
+        severity = new_severity
         insert_payload = {
             "ride_id": ride_id,
             "consolidated_latitude": lat,
