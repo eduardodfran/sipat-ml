@@ -724,8 +724,10 @@ def _insert_raw_detections(supabase: Client, raw_batch: list[dict[str, Any]]) ->
         print("No raw detections were generated for this ride")
         return
 
+    insert_data = [{k: v for k, v in item.items() if k != "phys_area_m2"} for item in raw_batch]
+
     print(f"Uploading {len(raw_batch)} raw frame detections to public.raw_detections...")
-    supabase.schema("public").from_("raw_detections").insert(raw_batch).execute()
+    supabase.schema("public").from_("raw_detections").insert(insert_data).execute()
 
 
 def _haversine_distance_meters(
