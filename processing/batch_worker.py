@@ -34,7 +34,8 @@ load_dotenv(dotenv_path=ENV_PATH)
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
 EARTH_RADIUS_METERS = 6371008.8
 MERGE_RADIUS_METERS = 3.0
-STATIONARY_THRESHOLD_METERS = 3.0
+STATIONARY_THRESHOLD_METERS = 5.0
+STATIONARY_RIDE_THRESHOLD_METERS = 5.0
 DEFAULT_PIXELS_PER_METER = 100.0
 DEFAULT_ROAD_WIDTH_METERS = 6.0
 DEFAULT_LOOKAHEAD_METERS = 30.0
@@ -572,6 +573,26 @@ def _load_gps_data(gps_json_path: Path) -> list[dict[str, Any]]:
     return gps_data
 
 
+def _median_gps_coordinate(gps_data: list[dict[str, Any]]) -> tuple[float, float]:
+    lats = sorted(float(item["lat"]) for item in gps_data if "lat" in item)
+    lngs = sorted(float(item["lng"]) for item in gps_data if "lng" in item)
+    return lats[len(lats) // 2], lngs[len(lngs) // 2]
+
+
+def _is_stationary_gps_track(
+    gps_data: list[dict[str, Any]],
+    max_consecutive_distance: float = STATIONARY_RIDE_THRESHOLD_METERS,
+) -> bool:
+    samples = [(float(item["lat"]), float(item["lng"])) for item in gps_data if "lat" in item and "lng" in item]
+    if len(samples) < 2:
+        return True
+    for i in range(1, len(samples)):
+        d = _haversine_distance_meters(samples[i-1][0], samples[i-1][1], samples[i][0], samples[i][1])
+        if d >= max_consecutive_distance:
+            return False
+    return True
+
+
 def _build_raw_detection_batch(
     video_path: Path,
     gps_path: Path,
@@ -581,6 +602,14 @@ def _build_raw_detection_batch(
 ) -> list[dict[str, Any]]:
     model = _load_yolo_model()
     gps_data = _load_gps_data(gps_path)
+
+    if _is_stationary_gps_track(gps_data):
+        median_lat, median_lng = _median_gps_coordinate(gps_data)
+        gps_data = [
+            {"timestamp_seconds": item["timestamp_seconds"], "lat": median_lat, "lng": median_lng}
+            for item in gps_data
+        ]
+
     gps_index = _build_gps_index(gps_data)
 
     capture = cv2.VideoCapture(str(video_path))
