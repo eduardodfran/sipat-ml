@@ -684,11 +684,9 @@ def _build_raw_detection_batch(
                             [x1 * ipm_context.frame_width, y2 * ipm_context.frame_height],
                         ]], dtype=np.float32)
                         bev_corners = cv2.perspectiveTransform(corners, ipm_context.matrix)[0]
-                        bev_w = max(0.0, np.max(bev_corners[:, 0]) - np.min(bev_corners[:, 0]))
-                        bev_h = max(0.0, np.max(bev_corners[:, 1]) - np.min(bev_corners[:, 1]))
-                        phys_area_m2 = (bev_w / ipm_context.pixels_per_meter) * (bev_h / ipm_context.pixels_per_meter)
-                        if not np.isfinite(phys_area_m2) or phys_area_m2 < 0:
-                            phys_area_m2 = 0.0
+                        bev_w = max(0.0, float(np.max(bev_corners[:, 0]) - np.min(bev_corners[:, 0])))
+                        bev_h = max(0.0, float(np.max(bev_corners[:, 1]) - np.min(bev_corners[:, 1])))
+                        phys_area_m2 = float((bev_w / ipm_context.pixels_per_meter) * (bev_h / ipm_context.pixels_per_meter))
                     except Exception:
                         severity = "Minor"
                         phys_area_m2 = 0.0
