@@ -49,7 +49,6 @@ def _run_process(ride_id: str) -> None:
             print(f"Ride {ride_id} not found")
             return
         ride = rows[0]
-        supabase.table("rides_metadata").update({"status": "processing"}).eq("id", ride_id).execute()
         ride["status"] = "processing"
         try:
             result = _process_ride(supabase, ride)
@@ -87,6 +86,8 @@ async def process_ride(ride_id: str, authorization: str = Header(None)):
         raise HTTPException(status_code=409, detail="Ride is already being processed")
     if current_status == "completed":
         raise HTTPException(status_code=409, detail="Ride has already been processed")
+
+    supabase.table("rides_metadata").update({"status": "processing"}).eq("id", ride_id).execute()
 
     thread = threading.Thread(target=_run_process, args=(ride_id,), daemon=True)
     thread.start()
