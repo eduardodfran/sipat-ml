@@ -23,6 +23,13 @@ from storage3.utils import StorageException
 from supabase import Client, create_client
 
 from .utils.damage_severity import calculate_severity
+from .utils.geo_math import (
+    EARTH_RADIUS_METERS,
+    STATIONARY_THRESHOLD_METERS,
+    bearing_degrees,
+    haversine_distance_meters,
+    is_stationary_gps_track,
+)
 from .utils.geo_sync import interpolate_coordinate_at_time
 
 from .clustering import cluster_pothole_detections
@@ -35,7 +42,6 @@ MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
 EARTH_RADIUS_METERS = 6371008.8
 MERGE_RADIUS_METERS = 3.0
 STATIONARY_THRESHOLD_METERS = 5.0
-STATIONARY_RIDE_THRESHOLD_METERS = 5.0
 DEFAULT_PIXELS_PER_METER = 100.0
 DEFAULT_ROAD_WIDTH_METERS = 6.0
 DEFAULT_LOOKAHEAD_METERS = 30.0
@@ -407,24 +413,12 @@ def _interpolated_gps_sample(
     return idx, lat, lng, heading
 
 
-def _bearing_degrees(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> float:
-    lat_a_rad = math.radians(lat_a)
-    lat_b_rad = math.radians(lat_b)
-    delta_lng = math.radians(lng_b - lng_a)
-
-    x = math.sin(delta_lng) * math.cos(lat_b_rad)
-    y = math.cos(lat_a_rad) * math.sin(lat_b_rad) - math.sin(lat_a_rad) * math.cos(
-        lat_b_rad
-    ) * math.cos(delta_lng)
-    return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
-
-
 def _estimate_heading_degrees(gps_index: GPSIndex, idx: int) -> float | None:
     sample_count = len(gps_index.latlng)
     if sample_count < 5:
         return None
 
-    total_displacement = _haversine_distance_meters(
+    total_displacement = haversine_distance_meters(
         gps_index.latlng[0][0], gps_index.latlng[0][1],
         gps_index.latlng[-1][0], gps_index.latlng[-1][1],
     )
@@ -440,10 +434,10 @@ def _estimate_heading_degrees(gps_index: GPSIndex, idx: int) -> float | None:
 
     lat_a, lng_a = gps_index.latlng[start_idx]
     lat_b, lng_b = gps_index.latlng[end_idx]
-    if _haversine_distance_meters(lat_a, lng_a, lat_b, lng_b) < STATIONARY_THRESHOLD_METERS:
+    if haversine_distance_meters(lat_a, lng_a, lat_b, lng_b) < STATIONARY_THRESHOLD_METERS:
         return None
 
-    return _bearing_degrees(lat_a, lng_a, lat_b, lng_b)
+    return bearing_degrees(lat_a, lng_a, lat_b, lng_b)
 
 
 def _offset_lat_lng(
@@ -597,20 +591,6 @@ def _median_gps_coordinate(gps_data: list[dict[str, Any]]) -> tuple[float, float
     return lats[len(lats) // 2], lngs[len(lngs) // 2]
 
 
-def _is_stationary_gps_track(
-    gps_data: list[dict[str, Any]],
-    max_consecutive_distance: float = STATIONARY_RIDE_THRESHOLD_METERS,
-) -> bool:
-    samples = [(float(item["lat"]), float(item["lng"])) for item in gps_data if "lat" in item and "lng" in item]
-    if len(samples) < 2:
-        return True
-    for i in range(1, len(samples)):
-        d = _haversine_distance_meters(samples[i-1][0], samples[i-1][1], samples[i][0], samples[i][1])
-        if d >= max_consecutive_distance:
-            return False
-    return True
-
-
 def _build_raw_detection_batch(
     video_path: Path,
     gps_path: Path,
@@ -621,7 +601,7 @@ def _build_raw_detection_batch(
     model = _load_yolo_model()
     gps_data = _load_gps_data(gps_path)
 
-    if _is_stationary_gps_track(gps_data):
+    if is_stationary_gps_track(gps_data):
         median_lat, median_lng = _median_gps_coordinate(gps_data)
         gps_data = [
             {"timestamp_seconds": item["timestamp_seconds"], "lat": median_lat, "lng": median_lng}
@@ -629,6 +609,11 @@ def _build_raw_detection_batch(
         ]
 
     gps_index = _build_gps_index(gps_data)
+
+    is_stationary = is_stationary_gps_track(gps_data)
+    if is_stationary:
+        median_lat, median_lng = _median_gps_coordinate(gps_data)
+        print(f"Stationary GPS track detected — collapsing all detections to median coordinate ({median_lat}, {median_lng})")
 
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -643,9 +628,7 @@ def _build_raw_detection_batch(
         ipm_context: IPMContext | None = None
         frame_count = 0
         detection_count = 0
-        last_upload_time = -1.0
         last_image_url: str | None = None
-        upload_interval = 1.0
 
         while capture.isOpened():
             success, frame = capture.read()
@@ -665,17 +648,14 @@ def _build_raw_detection_batch(
 
                 detection_count += 1
 
-                if timestamp_seconds - last_upload_time >= upload_interval:
-                    try:
-                        annotated_frame = result.plot()
-                        _, encoded_frame = cv2.imencode(".jpg", annotated_frame)
-                        last_image_url = _upload_annotated_frame(
-                            encoded_frame.tobytes(), ride_id, timestamp_seconds, supabase
-                        )
-                        last_upload_time = timestamp_seconds
-                        print(f"Uploaded annotated frame: {last_image_url}")
-                    except Exception as upload_err:
-                        print(f"Failed to upload annotated frame: {upload_err}")
+                try:
+                    annotated_frame = result.plot()
+                    _, encoded_frame = cv2.imencode(".jpg", annotated_frame)
+                    last_image_url = _upload_annotated_frame(
+                        encoded_frame.tobytes(), ride_id, timestamp_seconds, supabase
+                    )
+                except Exception as upload_err:
+                    print(f"Failed to upload annotated frame: {upload_err}")
                 image_url = last_image_url
 
                 for _box in result.boxes:
@@ -698,14 +678,17 @@ def _build_raw_detection_batch(
                         phys_area_m2 = 0.0
 
                     bottom_center = _bottom_center_point(_box)
-                    dx_meters, dy_meters = _ipm_pixel_to_offset(bottom_center, ipm_context)
-                    lat, lng = _project_detection_to_gps(
-                        gps_index,
-                        gps_data,
-                        timestamp_seconds,
-                        dx_meters,
-                        dy_meters,
-                    )
+                    if is_stationary:
+                        lat, lng = median_lat, median_lng
+                    else:
+                        dx_meters, dy_meters = _ipm_pixel_to_offset(bottom_center, ipm_context)
+                        lat, lng = _project_detection_to_gps(
+                            gps_index,
+                            gps_data,
+                            timestamp_seconds,
+                            dx_meters,
+                            dy_meters,
+                        )
                     raw_detections_batch.append(
                         {
                             "ride_id": ride_id,
@@ -734,25 +717,6 @@ def _insert_raw_detections(supabase: Client, raw_batch: list[dict[str, Any]]) ->
 
     print(f"Uploading {len(raw_batch)} raw frame detections to public.raw_detections...")
     supabase.schema("public").from_("raw_detections").insert(insert_data).execute()
-
-
-def _haversine_distance_meters(
-    lat_a: float,
-    lng_a: float,
-    lat_b: float,
-    lng_b: float,
-) -> float:
-    lat_a_rad, lng_a_rad, lat_b_rad, lng_b_rad = np.radians(
-        [lat_a, lng_a, lat_b, lng_b]
-    )
-    delta_lat = lat_b_rad - lat_a_rad
-    delta_lng = lng_b_rad - lng_a_rad
-
-    a = (
-        np.sin(delta_lat / 2.0) ** 2
-        + np.cos(lat_a_rad) * np.cos(lat_b_rad) * np.sin(delta_lng / 2.0) ** 2
-    )
-    return float(2.0 * EARTH_RADIUS_METERS * np.arcsin(np.sqrt(a)))
 
 
 def _compute_worst_severity(total_hits: int) -> str:
@@ -788,7 +752,7 @@ def _find_matching_verified_pothole(
         if lat is None or lng is None:
             continue
 
-        distance_meters = _haversine_distance_meters(
+        distance_meters = haversine_distance_meters(
             float(lat), float(lng), target_lat, target_lng
         )
         if distance_meters <= closest_distance:
@@ -806,7 +770,7 @@ def _sync_verified_potholes(
     clustered_potholes = cluster_pothole_detections(
         raw_batch,
         max_distance_meters=MERGE_RADIUS_METERS,
-        min_detections=2,
+        min_detections=3,
     )
 
     if not clustered_potholes:
