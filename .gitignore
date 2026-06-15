@@ -48,6 +48,9 @@ temp/
 *.sqlite
 *.sqlite3
 
+# Windows reserved device names
+nul
+
 # Model and generated artifacts
 weights/*.pt
 weights/*.onnx

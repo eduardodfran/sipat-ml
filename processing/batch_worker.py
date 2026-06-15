@@ -421,7 +421,14 @@ def _bearing_degrees(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> 
 
 def _estimate_heading_degrees(gps_index: GPSIndex, idx: int) -> float | None:
     sample_count = len(gps_index.latlng)
-    if sample_count < 2:
+    if sample_count < 5:
+        return None
+
+    total_displacement = _haversine_distance_meters(
+        gps_index.latlng[0][0], gps_index.latlng[0][1],
+        gps_index.latlng[-1][0], gps_index.latlng[-1][1],
+    )
+    if total_displacement < STATIONARY_THRESHOLD_METERS:
         return None
 
     if idx <= 0:
@@ -637,6 +644,7 @@ def _build_raw_detection_batch(
         frame_count = 0
         detection_count = 0
         last_upload_time = -1.0
+        last_image_url: str | None = None
         upload_interval = 1.0
 
         while capture.isOpened():
@@ -661,16 +669,14 @@ def _build_raw_detection_batch(
                     try:
                         annotated_frame = result.plot()
                         _, encoded_frame = cv2.imencode(".jpg", annotated_frame)
-                        image_url = _upload_annotated_frame(
+                        last_image_url = _upload_annotated_frame(
                             encoded_frame.tobytes(), ride_id, timestamp_seconds, supabase
                         )
                         last_upload_time = timestamp_seconds
-                        print(f"Uploaded annotated frame: {image_url}")
+                        print(f"Uploaded annotated frame: {last_image_url}")
                     except Exception as upload_err:
                         print(f"Failed to upload annotated frame: {upload_err}")
-                        image_url = None
-                else:
-                    image_url = None
+                image_url = last_image_url
 
                 for _box in result.boxes:
                     try:
