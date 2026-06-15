@@ -1,16 +1,16 @@
-import os
 import base64
-import cv2
 import json
-import numpy as np
+import os
 import re
 from urllib.parse import urlparse
+
+import cv2
+from clustering import cluster_pothole_detections
+from dotenv import load_dotenv
+from postgrest.exceptions import APIError
+from supabase import Client, create_client
 from ultralytics import YOLO
 from utils.geo_sync import interpolate_coordinate_at_time
-from dotenv import load_dotenv
-from supabase import create_client, Client
-from postgrest.exceptions import APIError
-from clustering import cluster_pothole_detections
 
 # 1. Dynamically locate and load the .env file at the root level
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -132,7 +132,7 @@ supabase: Client = create_client(SUPABASE_URL, SERVICE_KEY)
 print("🔑 Supabase client initialized using service role key")
 
 # 4. Load your custom-trained YOLO26 model
-model = YOLO('../weights/best.pt')
+model = YOLO("../weights/best.pt")
 
 
 def run_processing_pipeline(video_file_path, gps_json_path, ride_id, user_id):
@@ -141,7 +141,7 @@ def run_processing_pipeline(video_file_path, gps_json_path, ride_id, user_id):
         print(f"❌ Error: Cannot find your mock GPS file at: {gps_json_path}")
         print("Please ensure you created 'mock_gps.json' inside your 'sipat-ml' root folder.")
         return
-        
+
     if not os.path.exists(video_file_path):
         print(f"⚠️ Note: '{video_file_path}' not found. Drop a test video file into your root folder to process raw frames.")
         print("💡 Skipping frame analysis loop and running a dry test directly on mock metrics...")
@@ -158,8 +158,8 @@ def run_processing_pipeline(video_file_path, gps_json_path, ride_id, user_id):
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps == 0:
         fps = 30.0 # Fallback default
-        
-    with open(gps_json_path, 'r') as f:
+
+    with open(gps_json_path) as f:
         gps_data = json.load(f)
 
     raw_detections_batch = []
@@ -224,7 +224,7 @@ def process_and_upload_results(raw_batch, ride_id):
 if __name__ == "__main__":
     # Point paths upward since our terminal is open inside the /processing directory
     run_processing_pipeline(
-        video_file_path="../sample_road_video.mp4", 
+        video_file_path="../sample_road_video.mp4",
         gps_json_path="../mock_gps.json",
         ride_id="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",  # Standard mock UUID format
         user_id=None                                     # Optional auth link

@@ -6,7 +6,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .common import _get_supabase, _validate_token, SUPABASE_URL, SERVICE_KEY
+from .common import _get_supabase, _validate_token
 from .upload_api import router as upload_router
 
 app = FastAPI(title="SIPAT Process API")
@@ -39,7 +39,12 @@ class RideInfo(BaseModel):
 
 
 def _run_process(ride_id: str) -> None:
-    from .batch_worker import _build_supabase_client, _friendly_error_message, _mark_failed, _process_ride
+    from .batch_worker import (
+        _build_supabase_client,
+        _friendly_error_message,
+        _mark_failed,
+        _process_ride,
+    )
 
     try:
         supabase = _build_supabase_client()

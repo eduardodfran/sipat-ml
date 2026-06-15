@@ -1,50 +1,33 @@
 import base64
-import subprocess
-from bisect import bisect_left
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
-import math
 import os
-import time
+import subprocess
 import tempfile
+import time
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import cv2
-import numpy as np
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 from postgrest.exceptions import APIError
-from ultralytics import YOLO
 from storage3.utils import StorageException
 from supabase import Client, create_client
-
-from .utils.damage_severity import calculate_severity
-from .utils.geo_math import (
-    EARTH_RADIUS_METERS,
-    STATIONARY_THRESHOLD_METERS,
-    bearing_degrees,
-    haversine_distance_meters,
-    is_stationary_gps_track,
-)
-from .utils.geo_sync import interpolate_coordinate_at_time
+from ultralytics import YOLO
 
 from .clustering import cluster_pothole_detections
+from .detection_batch_builder import DetectionBatchBuilder
+from .utils.geo_math import haversine_distance_meters
+from .utils.gps_processor import GPSProcessor
 
 CURRENT_DIR = Path(__file__).resolve().parent
 ENV_PATH = CURRENT_DIR.parent / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
-EARTH_RADIUS_METERS = 6371008.8
 MERGE_RADIUS_METERS = 3.0
-STATIONARY_THRESHOLD_METERS = 5.0
-DEFAULT_PIXELS_PER_METER = 100.0
-DEFAULT_ROAD_WIDTH_METERS = 6.0
-DEFAULT_LOOKAHEAD_METERS = 30.0
 
 SEVERITY_MINOR_AREA_M2 = 0.03
 SEVERITY_MODERATE_AREA_M2 = 0.12
@@ -254,24 +237,6 @@ def _download_object_to_temp_folder(
     return local_path
 
 
-ANNOTATED_FRAMES_BUCKET = "detected-images"
-
-
-def _upload_annotated_frame(
-    frame_bytes: bytes,
-    ride_id: str,
-    timestamp_seconds: float,
-    supabase: Client,
-) -> str:
-    object_path = f"annotated-frames/{ride_id}/{timestamp_seconds:.3f}.jpg"
-    supabase.storage.from_(ANNOTATED_FRAMES_BUCKET).upload(
-        path=object_path,
-        file=frame_bytes,
-        file_options={"content-type": "image/jpeg", "upsert": "true"},
-    )
-    return f"{SUPABASE_URL}/storage/v1/object/public/{ANNOTATED_FRAMES_BUCKET}/{object_path}"
-
-
 def _load_yolo_model() -> YOLO:
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"YOLO weights not found at: {MODEL_PATH}")
@@ -297,417 +262,6 @@ def _repair_video(video_path: Path) -> Path:
         return video_path
 
 
-@dataclass(frozen=True)
-class GPSIndex:
-    timestamps: list[float]
-    latlng: list[tuple[float, float]]
-    headings: list[float | None]
-
-
-@dataclass(frozen=True)
-class IPMContext:
-    matrix: np.ndarray
-    pixels_per_meter: float
-    output_width_px: int
-    output_height_px: int
-    frame_width: int
-    frame_height: int
-
-
-def _parse_heading(item: dict[str, Any]) -> float | None:
-    for key in ("vehicle_heading_degrees", "heading_degrees", "heading"):
-        if key not in item:
-            continue
-        value = item.get(key)
-        if value is None:
-            return None
-        try:
-            return float(value) % 360.0
-        except (TypeError, ValueError):
-            return None
-    return None
-
-
-def _build_gps_index(gps_data: list[dict[str, Any]]) -> GPSIndex:
-    samples: list[tuple[float, float, float, float | None]] = []
-    for item in gps_data:
-        try:
-            timestamp = float(item["timestamp_seconds"])
-            lat = float(item["lat"])
-            lng = float(item["lng"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        heading = _parse_heading(item)
-        samples.append((timestamp, lat, lng, heading))
-
-    if not samples:
-        raise ValueError("GPS JSON must include timestamp_seconds, lat, and lng values")
-
-    samples.sort(key=lambda row: row[0])
-    return GPSIndex(
-        timestamps=[row[0] for row in samples],
-        latlng=[(row[1], row[2]) for row in samples],
-        headings=[row[3] for row in samples],
-    )
-
-
-def _closest_gps_index(gps_index: GPSIndex, current_time: float) -> int:
-    pos = bisect_left(gps_index.timestamps, current_time)
-    if pos <= 0:
-        return 0
-    if pos >= len(gps_index.timestamps):
-        return len(gps_index.timestamps) - 1
-    before = pos - 1
-    after = pos
-    if abs(gps_index.timestamps[before] - current_time) <= abs(
-        gps_index.timestamps[after] - current_time
-    ):
-        return before
-    return after
-
-
-def _lerp_heading_degrees(
-    start_deg: float, end_deg: float, fraction: float
-) -> float:
-    fraction = max(0.0, min(1.0, fraction))
-    delta = (end_deg - start_deg + 180.0) % 360.0 - 180.0
-    return (start_deg + fraction * delta + 360.0) % 360.0
-
-
-def _interpolated_gps_sample(
-    gps_index: GPSIndex, current_time: float
-) -> tuple[int, float, float, float | None]:
-    timestamps = gps_index.timestamps
-    pos = bisect_left(timestamps, current_time)
-    if pos <= 0:
-        lat, lng = gps_index.latlng[0]
-        return 0, lat, lng, gps_index.headings[0]
-    if pos >= len(timestamps):
-        last = len(timestamps) - 1
-        lat, lng = gps_index.latlng[last]
-        return last, lat, lng, gps_index.headings[last]
-
-    t1 = timestamps[pos - 1]
-    t2 = timestamps[pos]
-    lat1, lng1 = gps_index.latlng[pos - 1]
-    lat2, lng2 = gps_index.latlng[pos]
-    if t2 == t1:
-        heading = gps_index.headings[pos - 1]
-        return pos - 1, lat1, lng1, heading
-
-    fraction = (current_time - t1) / (t2 - t1)
-    lat = lat1 + fraction * (lat2 - lat1)
-    lng = lng1 + fraction * (lng2 - lng1)
-
-    heading1 = gps_index.headings[pos - 1]
-    heading2 = gps_index.headings[pos]
-    heading = None
-    if heading1 is not None and heading2 is not None:
-        heading = _lerp_heading_degrees(heading1, heading2, fraction)
-
-    if abs(current_time - t1) <= abs(t2 - current_time):
-        idx = pos - 1
-    else:
-        idx = pos
-
-    return idx, lat, lng, heading
-
-
-def _estimate_heading_degrees(gps_index: GPSIndex, idx: int) -> float | None:
-    sample_count = len(gps_index.latlng)
-    if sample_count < 5:
-        return None
-
-    total_displacement = haversine_distance_meters(
-        gps_index.latlng[0][0], gps_index.latlng[0][1],
-        gps_index.latlng[-1][0], gps_index.latlng[-1][1],
-    )
-    if total_displacement < STATIONARY_THRESHOLD_METERS:
-        return None
-
-    if idx <= 0:
-        start_idx, end_idx = 0, 1
-    elif idx >= sample_count - 1:
-        start_idx, end_idx = sample_count - 2, sample_count - 1
-    else:
-        start_idx, end_idx = idx - 1, idx + 1
-
-    lat_a, lng_a = gps_index.latlng[start_idx]
-    lat_b, lng_b = gps_index.latlng[end_idx]
-    if haversine_distance_meters(lat_a, lng_a, lat_b, lng_b) < STATIONARY_THRESHOLD_METERS:
-        return None
-
-    return bearing_degrees(lat_a, lng_a, lat_b, lng_b)
-
-
-def _offset_lat_lng(
-    base_lat: float,
-    base_lng: float,
-    dx_meters: float,
-    dy_meters: float,
-    bearing_degrees: float,
-) -> tuple[float, float]:
-    bearing_rad = math.radians(bearing_degrees)
-    north_m = dy_meters * math.cos(bearing_rad) - dx_meters * math.sin(bearing_rad)
-    east_m = dy_meters * math.sin(bearing_rad) + dx_meters * math.cos(bearing_rad)
-
-    lat_rad = math.radians(base_lat)
-    cos_lat = math.cos(lat_rad)
-    if abs(cos_lat) < 1e-12:
-        return base_lat, base_lng
-
-    delta_lat = north_m / EARTH_RADIUS_METERS
-    delta_lng = east_m / (EARTH_RADIUS_METERS * cos_lat)
-
-    return (
-        base_lat + math.degrees(delta_lat),
-        base_lng + math.degrees(delta_lng),
-    )
-
-
-def _default_roi_points(frame_width: int, frame_height: int) -> np.ndarray:
-    center_x = frame_width * 0.5
-    top_y = frame_height * 0.6
-    bottom_y = frame_height * 0.95
-    top_half_width = frame_width * 0.1
-    bottom_half_width = frame_width * 0.45
-
-    return np.float32(
-        [
-            [center_x - top_half_width, top_y],
-            [center_x + top_half_width, top_y],
-            [center_x + bottom_half_width, bottom_y],
-            [center_x - bottom_half_width, bottom_y],
-        ]
-    )
-
-
-def _build_ipm_context(
-    frame_width: int,
-    frame_height: int,
-    pixels_per_meter: float = DEFAULT_PIXELS_PER_METER,
-    road_width_meters: float = DEFAULT_ROAD_WIDTH_METERS,
-    lookahead_meters: float = DEFAULT_LOOKAHEAD_METERS,
-) -> IPMContext:
-    src = _default_roi_points(frame_width, frame_height)
-    output_width_px = max(1, int(road_width_meters * pixels_per_meter))
-    output_height_px = max(1, int(lookahead_meters * pixels_per_meter))
-    dst = np.float32(
-        [
-            [0.0, 0.0],
-            [float(output_width_px), 0.0],
-            [float(output_width_px), float(output_height_px)],
-            [0.0, float(output_height_px)],
-        ]
-    )
-    matrix = cv2.getPerspectiveTransform(src, dst)
-    return IPMContext(
-        matrix=matrix,
-        pixels_per_meter=pixels_per_meter,
-        output_width_px=output_width_px,
-        output_height_px=output_height_px,
-        frame_width=frame_width,
-        frame_height=frame_height,
-    )
-
-
-def _bottom_center_point(box: Any) -> tuple[float, float] | None:
-    xyxy = getattr(box, "xyxy", None)
-    if xyxy is None:
-        return None
-    try:
-        coords = xyxy[0].tolist()
-    except Exception:
-        try:
-            coords = list(xyxy[0])
-        except Exception:
-            return None
-    if len(coords) < 4:
-        return None
-    x1, _, x2, y2 = map(float, coords[:4])
-    return (x1 + x2) * 0.5, y2
-
-
-def _ipm_pixel_to_offset(
-    pixel_point: tuple[float, float] | None,
-    ipm_context: IPMContext | None,
-) -> tuple[float, float]:
-    if ipm_context is None or pixel_point is None:
-        return 0.0, 0.0
-
-    x, y = pixel_point
-    x = float(np.clip(x, 0.0, ipm_context.frame_width - 1))
-    y = float(np.clip(y, 0.0, ipm_context.frame_height - 1))
-
-    point = np.array([[[x, y]]], dtype=np.float32)
-    transformed = cv2.perspectiveTransform(point, ipm_context.matrix)
-    x_bev, y_bev = transformed[0][0]
-    if not np.isfinite(x_bev) or not np.isfinite(y_bev):
-        return 0.0, 0.0
-
-    dx_meters = (float(x_bev) - (ipm_context.output_width_px / 2.0)) / ipm_context.pixels_per_meter
-    dy_meters = (ipm_context.output_height_px - float(y_bev)) / ipm_context.pixels_per_meter
-
-    max_lateral = ipm_context.output_width_px / (2.0 * ipm_context.pixels_per_meter)
-    max_forward = ipm_context.output_height_px / ipm_context.pixels_per_meter
-    dx_meters = max(-max_lateral, min(max_lateral, dx_meters))
-    dy_meters = max(0.0, min(max_forward, dy_meters))
-
-    return dx_meters, dy_meters
-
-
-def _project_detection_to_gps(
-    gps_index: GPSIndex,
-    gps_data: list[dict[str, Any]],
-    current_time: float,
-    dx_meters: float,
-    dy_meters: float,
-) -> tuple[float, float]:
-    base_lat, base_lng = interpolate_coordinate_at_time(gps_data, current_time)
-    idx = _closest_gps_index(gps_index, current_time)
-    heading = _estimate_heading_degrees(gps_index, idx)
-    if dx_meters == 0.0 and dy_meters == 0.0:
-        return base_lat, base_lng
-
-    if heading is None:
-        return base_lat, base_lng
-
-    return _offset_lat_lng(base_lat, base_lng, dx_meters, dy_meters, heading)
-
-
-def _load_gps_data(gps_json_path: Path) -> list[dict[str, Any]]:
-    with gps_json_path.open("r", encoding="utf-8") as gps_file:
-        gps_data = json.load(gps_file)
-
-    if not isinstance(gps_data, list):
-        raise ValueError("GPS JSON must contain a list of timestamped samples")
-
-    return gps_data
-
-
-def _median_gps_coordinate(gps_data: list[dict[str, Any]]) -> tuple[float, float]:
-    lats = sorted(float(item["lat"]) for item in gps_data if "lat" in item)
-    lngs = sorted(float(item["lng"]) for item in gps_data if "lng" in item)
-    return lats[len(lats) // 2], lngs[len(lngs) // 2]
-
-
-def _build_raw_detection_batch(
-    video_path: Path,
-    gps_path: Path,
-    ride_id: str,
-    user_id: str | None,
-    supabase: Client,
-) -> list[dict[str, Any]]:
-    model = _load_yolo_model()
-    gps_data = _load_gps_data(gps_path)
-
-    if is_stationary_gps_track(gps_data):
-        median_lat, median_lng = _median_gps_coordinate(gps_data)
-        gps_data = [
-            {"timestamp_seconds": item["timestamp_seconds"], "lat": median_lat, "lng": median_lng}
-            for item in gps_data
-        ]
-
-    gps_index = _build_gps_index(gps_data)
-
-    is_stationary = is_stationary_gps_track(gps_data)
-    if is_stationary:
-        median_lat, median_lng = _median_gps_coordinate(gps_data)
-        print(f"Stationary GPS track detected — collapsing all detections to median coordinate ({median_lat}, {median_lng})")
-
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise RuntimeError(f"Unable to open downloaded video: {video_path}")
-
-    try:
-        frames_per_second = capture.get(cv2.CAP_PROP_FPS)
-        if not frames_per_second or frames_per_second <= 0:
-            frames_per_second = 30.0
-
-        raw_detections_batch: list[dict[str, Any]] = []
-        ipm_context: IPMContext | None = None
-        frame_count = 0
-        detection_count = 0
-        last_image_url: str | None = None
-
-        while capture.isOpened():
-            success, frame = capture.read()
-            if not success:
-                break
-
-            frame_count += 1
-            current_frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
-            timestamp_seconds = current_frame_index / frames_per_second
-            if ipm_context is None:
-                ipm_context = _build_ipm_context(frame.shape[1], frame.shape[0])
-            results = model(frame, conf=0.4, verbose=False)
-
-            for result in results:
-                if not getattr(result, "boxes", None):
-                    continue
-
-                detection_count += 1
-
-                try:
-                    annotated_frame = result.plot()
-                    _, encoded_frame = cv2.imencode(".jpg", annotated_frame)
-                    last_image_url = _upload_annotated_frame(
-                        encoded_frame.tobytes(), ride_id, timestamp_seconds, supabase
-                    )
-                except Exception as upload_err:
-                    print(f"Failed to upload annotated frame: {upload_err}")
-                image_url = last_image_url
-
-                for _box in result.boxes:
-                    try:
-                        bbox = _box.xyxyn[0].tolist()
-                        severity = calculate_severity(bbox)
-                        x1, y1, x2, y2 = bbox
-                        corners = np.array([[
-                            [x1 * ipm_context.frame_width, y1 * ipm_context.frame_height],
-                            [x2 * ipm_context.frame_width, y1 * ipm_context.frame_height],
-                            [x2 * ipm_context.frame_width, y2 * ipm_context.frame_height],
-                            [x1 * ipm_context.frame_width, y2 * ipm_context.frame_height],
-                        ]], dtype=np.float32)
-                        bev_corners = cv2.perspectiveTransform(corners, ipm_context.matrix)[0]
-                        bev_w = max(0.0, float(np.max(bev_corners[:, 0]) - np.min(bev_corners[:, 0])))
-                        bev_h = max(0.0, float(np.max(bev_corners[:, 1]) - np.min(bev_corners[:, 1])))
-                        phys_area_m2 = float((bev_w / ipm_context.pixels_per_meter) * (bev_h / ipm_context.pixels_per_meter))
-                    except Exception:
-                        severity = "Minor"
-                        phys_area_m2 = 0.0
-
-                    bottom_center = _bottom_center_point(_box)
-                    if is_stationary:
-                        lat, lng = median_lat, median_lng
-                    else:
-                        dx_meters, dy_meters = _ipm_pixel_to_offset(bottom_center, ipm_context)
-                        lat, lng = _project_detection_to_gps(
-                            gps_index,
-                            gps_data,
-                            timestamp_seconds,
-                            dx_meters,
-                            dy_meters,
-                        )
-                    raw_detections_batch.append(
-                        {
-                            "ride_id": ride_id,
-                            "user_id": user_id,
-                            "lat": lat,
-                            "lng": lng,
-                            "video_timestamp": timestamp_seconds,
-                            "severity": severity,
-                            "phys_area_m2": phys_area_m2,
-                            "image_url": image_url,
-                        }
-                    )
-
-        print(f"Processed {frame_count} frames, {detection_count} detections with boxes")
-        return raw_detections_batch
-    finally:
-        capture.release()
-
-
 def _insert_raw_detections(supabase: Client, raw_batch: list[dict[str, Any]]) -> None:
     if not raw_batch:
         print("No raw detections were generated for this ride")
@@ -717,14 +271,6 @@ def _insert_raw_detections(supabase: Client, raw_batch: list[dict[str, Any]]) ->
 
     print(f"Uploading {len(raw_batch)} raw frame detections to public.raw_detections...")
     supabase.schema("public").from_("raw_detections").insert(insert_data).execute()
-
-
-def _compute_worst_severity(total_hits: int) -> str:
-    if total_hits >= 20:
-        return "Severe"
-    if total_hits >= 6:
-        return "Moderate"
-    return "Minor"
 
 
 def _fetch_verified_potholes(supabase: Client) -> list[dict[str, Any]]:
@@ -867,13 +413,16 @@ def _process_ride(supabase: Client, ride: dict[str, Any]) -> dict[str, Any]:
             "raw-road-data", gps_path, temp_dir, supabase
         )
 
-        raw_batch = _build_raw_detection_batch(
-            video_path=video_local_path,
-            gps_path=gps_local_path,
+        model = _load_yolo_model()
+        gps_processor = GPSProcessor.from_json_file(gps_local_path)
+        builder = DetectionBatchBuilder(
             ride_id=ride_id,
             user_id=str(user_id) if user_id is not None else None,
             supabase=supabase,
+            model=model,
+            supabase_url=SUPABASE_URL,
         )
+        raw_batch = builder.build(video_local_path, gps_processor)
         _insert_raw_detections(supabase, raw_batch)
         _sync_verified_potholes(supabase, raw_batch, ride_id)
         _mark_completed(supabase, ride_id)

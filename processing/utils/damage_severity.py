@@ -12,10 +12,9 @@ def calculate_severity(bbox):
 
     if area_pct < 2:
         return "Minor"
-    elif area_pct <= 6:
+    if area_pct <= 6:
         return "Moderate"
-    else:
-        return "Severe"
+    return "Severe"
 
 
 if __name__ == "__main__":

@@ -224,8 +224,7 @@ def _insert_ride_metadata(
             "gps_bucket_path": gps_bucket_path,
             "status": "pending",
         }
-    )
-    .execute()
+    ).execute()
 
 
 def trigger_test_ingest() -> dict[str, str]:
@@ -264,7 +263,7 @@ def trigger_test_ingest() -> dict[str, str]:
 
     try:
         source_video_bytes = _download_source_object(supabase, source_video_object_path)
-        _upload_object_with_overwrite(
+        _upload_bytes_with_overwrite(
             supabase,
             video_bucket_path,
             source_video_bytes,
@@ -282,7 +281,7 @@ def trigger_test_ingest() -> dict[str, str]:
                 source_gps_bytes.decode("utf-8"), source_gps_object_path
             )
 
-        _upload_object_with_overwrite(
+        _upload_bytes_with_overwrite(
             supabase,
             gps_bucket_path,
             json.dumps(gps_payload, separators=(",", ":")).encode("utf-8"),

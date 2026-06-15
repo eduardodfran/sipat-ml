@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-sys.path.insert(0, ".")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from utils.geo_sync import interpolate_coordinate_at_time
 
