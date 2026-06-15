@@ -43,6 +43,7 @@ def cluster_pothole_detections(raw_data_list, max_distance_meters=3.0, min_detec
             "lng": round(centroid_lng, 6),
             "detection_count": total_hits,
             "image_url": image_url,
+            "max_area_m2": float(cluster_subset['phys_area_m2'].max()),
         })
         
     return cleaned_potholes
