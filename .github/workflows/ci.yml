@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install linting tools
+        run: pip install ruff mypy
+
+      - name: Run ruff
+        run: ruff check processing/
+
+      - name: Run mypy
+        run: mypy processing/utils/ processing/detection_batch_builder.py --ignore-missing-imports --disable-error-code=import --no-strict-optional
+
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install numpy pandas scikit-learn pytest
+
+      - name: Run unit tests
+        run: pytest processing/test_unit.py processing/test_geo_sync.py -v
