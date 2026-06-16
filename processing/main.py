@@ -1,3 +1,4 @@
+import os
 import threading
 import traceback
 
@@ -11,10 +12,16 @@ from .upload_api import router as upload_router
 
 app = FastAPI(title="SIPAT Process API")
 
+_cors_origins_str = os.getenv("CORS_ORIGINS", "")
+if _cors_origins_str:
+    _cors_origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
+else:
+    _cors_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
