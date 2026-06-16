@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
+from starlette.requests import Request
 
 from .common import (
     CONTAINER_NAME,
@@ -12,6 +13,7 @@ from .common import (
     _get_supabase,
     _validate_token,
 )
+from .rate_limiter import UPLOAD_LIMIT, limiter
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -78,7 +80,10 @@ def _validate_path_ownership(user_id: str, paths: list[str]) -> None:
 
 
 @router.post("/init", response_model=InitUploadResponse)
-async def init_upload(request: InitUploadRequest, authorization: str = Header(None)):
+@limiter.limit(UPLOAD_LIMIT)
+async def init_upload(
+    request: Request, upload_request: InitUploadRequest, authorization: str = Header(None)
+):
     auth = _validate_token(authorization)
     user_id = auth["user_id"]
 
@@ -100,16 +105,17 @@ async def init_upload(request: InitUploadRequest, authorization: str = Header(No
 
 
 @router.post("/complete")
+@limiter.limit(UPLOAD_LIMIT)
 async def complete_upload(
-    request: CompleteUploadRequest, authorization: str = Header(None)
+    request: Request, body: CompleteUploadRequest, authorization: str = Header(None)
 ):
     auth = _validate_token(authorization)
     user_id = auth["user_id"]
 
-    _validate_path_ownership(user_id, [request.video_path, request.gps_path])
+    _validate_path_ownership(user_id, [body.video_path, body.gps_path])
 
     blob_service = _get_blob_service()
-    for path, label in [(request.video_path, "video"), (request.gps_path, "GPS")]:
+    for path, label in [(body.video_path, "video"), (body.gps_path, "GPS")]:
         bc = blob_service.get_blob_client(container=CONTAINER_NAME, blob=path)
         props = bc.get_blob_properties()
         if props.size == 0:
@@ -121,23 +127,24 @@ async def complete_upload(
     supabase = _get_supabase()
     supabase.table("rides_metadata").insert(
         {
-            "id": request.ride_id,
+            "id": body.ride_id,
             "user_id": user_id,
-            "video_bucket_path": request.video_path,
-            "gps_bucket_path": request.gps_path,
+            "video_bucket_path": body.video_path,
+            "gps_bucket_path": body.gps_path,
             "status": "queued",
         }
     ).execute()
 
-    return {"status": "ok", "ride_id": request.ride_id}
+    return {"status": "ok", "ride_id": body.ride_id}
 
 
 @router.post("/abort")
+@limiter.limit(UPLOAD_LIMIT)
 async def abort_upload(
-    request: AbortUploadRequest, authorization: str = Header(None)
+    request: Request, body: AbortUploadRequest, authorization: str = Header(None)
 ):
     auth = _validate_token(authorization)
     user_id = auth["user_id"]
-    _validate_path_ownership(user_id, [request.video_path, request.gps_path])
-    _delete_blobs([request.video_path, request.gps_path])
+    _validate_path_ownership(user_id, [body.video_path, body.gps_path])
+    _delete_blobs([body.video_path, body.gps_path])
     return {"status": "ok", "message": "Uploaded blobs deleted"}

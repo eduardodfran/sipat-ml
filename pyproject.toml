@@ -10,6 +10,7 @@ line-length = 88
 select = ["ALL"]
 ignore = [
     "ANN",     # missing type annotation (too verbose)
+    "ARG",     # unused arguments — FastAPI injects request, background_tasks, etc.
     "COM",     # comma spacing
     "D",       # docstring
     "EM",      # exception message

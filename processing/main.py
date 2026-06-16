@@ -6,11 +6,18 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.middleware import SlowAPIMiddleware
+from starlette.requests import Request
 
 from .common import _get_supabase, _validate_token
+from .rate_limiter import DELETE_LIMIT, HEALTH_LIMIT, PROCESS_LIMIT, READ_LIMIT, limiter
 from .upload_api import router as upload_router
 
 app = FastAPI(title="SIPAT Process API")
+
+app.state.limiter = limiter
+app.add_exception_handler(429, _rate_limit_exceeded_handler)
 
 _cors_origins_str = os.getenv("CORS_ORIGINS", "")
 if _cors_origins_str:
@@ -25,6 +32,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(upload_router)
 
@@ -79,7 +88,10 @@ def _run_process(ride_id: str) -> None:
 
 
 @app.post("/process/{ride_id}", response_model=ProcessResponse)
-async def process_ride(ride_id: str, authorization: str = Header(None)):
+@limiter.limit(PROCESS_LIMIT)
+async def process_ride(
+    request: Request, ride_id: str, authorization: str = Header(None)
+):
     auth = _validate_token(authorization)
     user_id = auth.get("user_id") or auth.get("sub")
 
@@ -112,7 +124,10 @@ async def process_ride(ride_id: str, authorization: str = Header(None)):
 
 
 @app.get("/rides")
-async def list_rides(authorization: str = Header(None)):
+@limiter.limit(READ_LIMIT)
+async def list_rides(
+    request: Request, authorization: str = Header(None)
+):
     auth = _validate_token(authorization)
     user_id = auth.get("user_id") or auth.get("sub")
     supabase = _get_supabase()
@@ -127,7 +142,10 @@ async def list_rides(authorization: str = Header(None)):
 
 
 @app.get("/rides/{ride_id}")
-async def get_ride(ride_id: str, authorization: str = Header(None)):
+@limiter.limit(READ_LIMIT)
+async def get_ride(
+    request: Request, ride_id: str, authorization: str = Header(None)
+):
     auth = _validate_token(authorization)
     user_id = auth.get("user_id") or auth.get("sub")
 
@@ -144,7 +162,10 @@ async def get_ride(ride_id: str, authorization: str = Header(None)):
 
 
 @app.delete("/rides/{ride_id}")
-async def delete_ride(ride_id: str, authorization: str = Header(None)):
+@limiter.limit(DELETE_LIMIT)
+async def delete_ride(
+    request: Request, ride_id: str, authorization: str = Header(None)
+):
     auth = _validate_token(authorization)
     user_id = auth.get("user_id") or auth.get("sub")
     supabase = _get_supabase()
@@ -158,7 +179,10 @@ async def delete_ride(ride_id: str, authorization: str = Header(None)):
 
 
 @app.get("/health")
-async def health():
+@limiter.limit(HEALTH_LIMIT)
+async def health(
+    request: Request,
+):
     return {"status": "ok"}
 
 
