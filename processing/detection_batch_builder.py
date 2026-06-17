@@ -12,6 +12,19 @@ from .utils.gps_processor import GPSProcessor
 from .utils.ipm_transformer import IPMTransformer
 
 ANNOTATED_FRAMES_BUCKET = "detected-images"
+_IOU_THRESHOLD = 0.7
+
+
+def _iou(box_a: list[float], box_b: list[float]) -> float:
+    x1 = max(box_a[0], box_b[0])
+    y1 = max(box_a[1], box_b[1])
+    x2 = min(box_a[2], box_b[2])
+    y2 = min(box_a[3], box_b[3])
+    intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+    union = area_a + area_b - intersection
+    return intersection / union if union > 0 else 0.0
 
 
 class DetectionBatchBuilder:
@@ -55,6 +68,7 @@ class DetectionBatchBuilder:
             frame_count = 0
             detection_count = 0
             last_image_url: str | None = None
+            prev_frame_boxes: list[list[float]] = []
 
             while capture.isOpened():
                 success, frame = capture.read()
@@ -70,6 +84,7 @@ class DetectionBatchBuilder:
 
                 for result in results:
                     if not getattr(result, "boxes", None):
+                        prev_frame_boxes = []
                         continue
 
                     detection_count += 1
@@ -84,11 +99,24 @@ class DetectionBatchBuilder:
                         print(f"Failed to upload annotated frame: {upload_err}")
                     image_url = last_image_url
 
+                    current_frame_boxes: list[list[float]] = []
                     for _box in result.boxes:
+                        try:
+                            bbox = _box.xyxyn[0].tolist()
+                        except Exception:
+                            continue
+
+                        current_frame_boxes.append(bbox)
+
+                        if prev_frame_boxes and any(
+                            _iou(bbox, prev) > _IOU_THRESHOLD
+                            for prev in prev_frame_boxes
+                        ):
+                            continue
+
                         severity = "Minor"
                         phys_area_m2 = 0.0
                         try:
-                            bbox = _box.xyxyn[0].tolist()
                             severity = calculate_severity(bbox)
                             phys_area_m2 = ipm.compute_phys_area(bbox)
                         except Exception:
@@ -115,6 +143,8 @@ class DetectionBatchBuilder:
                                 "image_url": image_url,
                             }
                         )
+
+                    prev_frame_boxes = current_frame_boxes
 
             print(
                 f"Processed {frame_count} frames, "
