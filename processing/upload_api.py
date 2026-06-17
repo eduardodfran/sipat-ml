@@ -17,6 +17,57 @@ from .rate_limiter import UPLOAD_LIMIT, limiter
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
+_EXPECTED_CONTENT_TYPES: dict[str, str] = {
+    "video": "video/mp4",
+    "GPS": "application/json",
+}
+_MP4_HEADER_BYTES = 8
+
+
+def _validate_blob_content(bc, label: str) -> None:
+    props = bc.get_blob_properties()
+
+    if props.size == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} blob is empty (0 bytes). Upload may have failed.",
+        )
+
+    expected_type = _EXPECTED_CONTENT_TYPES[label]
+    stored_type = (props.content_settings.content_type
+                   if props.content_settings else None)
+    if not stored_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} blob has no content type set",
+        )
+    if stored_type != expected_type:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{label} blob has incorrect content type "
+                f"'{stored_type}', expected '{expected_type}'"
+            ),
+        )
+
+    if label == "video":
+        stream = bc.download_blob(offset=0, length=_MP4_HEADER_BYTES)
+        header = stream.readall()
+        if len(header) < _MP4_HEADER_BYTES or header[4:8] != b"ftyp":
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label} blob is not a valid MP4 (missing ftyp box)",
+            )
+    elif label == "GPS":
+        stream = bc.download_blob(offset=0, length=256)
+        data = stream.readall()
+        stripped = data.lstrip()
+        if not stripped or stripped[0] not in (ord("{"), ord("[")):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label} blob is not valid JSON",
+            )
+
 
 class InitUploadRequest(BaseModel):
     video_filename: str
@@ -115,14 +166,9 @@ async def complete_upload(
     _validate_path_ownership(user_id, [body.video_path, body.gps_path])
 
     blob_service = _get_blob_service()
-    for path, label in [(body.video_path, "video"), (body.gps_path, "GPS")]:
+    for label, path in [("video", body.video_path), ("GPS", body.gps_path)]:
         bc = blob_service.get_blob_client(container=CONTAINER_NAME, blob=path)
-        props = bc.get_blob_properties()
-        if props.size == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{label} blob is empty (0 bytes). Upload may have failed.",
-            )
+        _validate_blob_content(bc, label)
 
     supabase = _get_supabase()
     supabase.table("rides_metadata").insert(
