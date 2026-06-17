@@ -1,6 +1,7 @@
 import os
 import threading
 import traceback
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
@@ -14,7 +15,39 @@ from .common import _get_supabase, _validate_token
 from .rate_limiter import DELETE_LIMIT, HEALTH_LIMIT, PROCESS_LIMIT, READ_LIMIT, limiter
 from .upload_api import router as upload_router
 
-app = FastAPI(title="SIPAT Process API")
+
+def _recover_stale_processing_rides() -> None:
+    try:
+        supabase = _get_supabase()
+        response = (
+            supabase.table("rides_metadata")
+            .select("id")
+            .eq("status", "processing")
+            .execute()
+        )
+        stale = response.data or []
+        if not stale:
+            return
+        ids = [row["id"] for row in stale if row.get("id")]
+        print(f"Recovering {len(ids)} stale processing ride(s): {ids}")
+        for ride_id in ids:
+            supabase.table("rides_metadata").update(
+                {
+                    "status": "failed",
+                    "error_log": "Server restarted while ride was being processed",
+                }
+            ).eq("id", ride_id).execute()
+    except Exception as e:
+        print(f"Failed to recover stale processing rides: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _recover_stale_processing_rides()
+    yield
+
+
+app = FastAPI(title="SIPAT Process API", lifespan=lifespan)
 
 app.state.limiter = limiter
 app.add_exception_handler(429, _rate_limit_exceeded_handler)
