@@ -205,7 +205,7 @@ def process_and_upload_results(raw_batch, ride_id):
 
     # Run your custom spatial DBSCAN clustering
     print("🧠 Running DBSCAN Spatial Clustering (3-meter radius validation)...")
-    clean_pins = cluster_pothole_detections(raw_batch, max_distance_meters=3.0, min_detections=3)
+    clean_pins = cluster_pothole_detections(raw_batch, max_distance_meters=15.0, min_detections=3)
 
     # Insert deduplicated map markers into verified_potholes
     if clean_pins:

@@ -27,7 +27,7 @@ ENV_PATH = CURRENT_DIR.parent / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
-MERGE_RADIUS_METERS = 3.0
+MERGE_RADIUS_METERS = 15.0
 
 SEVERITY_MINOR_AREA_M2 = 0.03
 SEVERITY_MODERATE_AREA_M2 = 0.12
