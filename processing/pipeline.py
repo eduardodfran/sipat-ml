@@ -174,7 +174,7 @@ def run_processing_pipeline(video_file_path, gps_json_path, ride_id, user_id):
         timestamp_seconds = frame_id / fps
 
         # Execute YOLO26 detection
-        results = model(frame, conf=0.4, verbose=False)
+        results = model(frame, conf=0.5, verbose=False)
 
         for result in results:
             if len(result.boxes) > 0:

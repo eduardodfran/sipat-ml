@@ -12,6 +12,7 @@ from .utils.gps_processor import GPSProcessor
 from .utils.ipm_transformer import IPMTransformer
 
 ANNOTATED_FRAMES_BUCKET = "detected-images"
+YOLO_CONFIDENCE = 0.5
 _IOU_THRESHOLD = 0.7
 
 
@@ -80,7 +81,7 @@ class DetectionBatchBuilder:
                 timestamp_seconds = current_frame_index / fps
                 if ipm is None:
                     ipm = IPMTransformer(frame.shape[1], frame.shape[0])
-                results = self.model(frame, conf=0.4, verbose=False)
+                results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
                 for result in results:
                     if not getattr(result, "boxes", None):
