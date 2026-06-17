@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -22,6 +23,11 @@ _EXPECTED_CONTENT_TYPES: dict[str, str] = {
     "GPS": "application/json",
 }
 _MP4_HEADER_BYTES = 8
+_BLOB_PATH_RE = re.compile(
+    r"^[a-zA-Z0-9_.@-]+/"
+    r"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"
+    r"\.(mp4|json)$"
+)
 
 
 def _validate_blob_content(bc, label: str) -> None:
@@ -130,6 +136,17 @@ def _validate_path_ownership(user_id: str, paths: list[str]) -> None:
             raise HTTPException(status_code=403, detail="Path does not belong to you")
 
 
+def _validate_blob_path(path: str) -> None:
+    if not path:
+        raise HTTPException(status_code=400, detail="Blob path is empty")
+    if ".." in path.replace("\\", "/").split("/"):
+        raise HTTPException(
+            status_code=400, detail="Blob path contains directory traversal"
+        )
+    if not _BLOB_PATH_RE.match(path):
+        raise HTTPException(status_code=400, detail="Blob path format is invalid")
+
+
 @router.post("/init", response_model=InitUploadResponse)
 @limiter.limit(UPLOAD_LIMIT)
 async def init_upload(
@@ -163,6 +180,8 @@ async def complete_upload(
     auth = _validate_token(authorization)
     user_id = auth["user_id"]
 
+    for path in [body.video_path, body.gps_path]:
+        _validate_blob_path(path)
     _validate_path_ownership(user_id, [body.video_path, body.gps_path])
 
     blob_service = _get_blob_service()
@@ -191,6 +210,8 @@ async def abort_upload(
 ):
     auth = _validate_token(authorization)
     user_id = auth["user_id"]
+    for path in [body.video_path, body.gps_path]:
+        _validate_blob_path(path)
     _validate_path_ownership(user_id, [body.video_path, body.gps_path])
     _delete_blobs([body.video_path, body.gps_path])
     return {"status": "ok", "message": "Uploaded blobs deleted"}
