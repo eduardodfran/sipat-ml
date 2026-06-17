@@ -77,12 +77,12 @@ def _run_process(ride_id: str) -> None:
         except Exception as exc:
             error_message = _friendly_error_message(exc)
             traceback_text = traceback.format_exc()
-            combined_error = f"{error_message}\n{traceback_text}"
             try:
-                _mark_failed(supabase, ride_id, combined_error)
+                _mark_failed(supabase, ride_id, error_message)
             except Exception as mark_exc:
                 print(f"Failed to mark ride {ride_id} as failed: {mark_exc}")
             print(f"Background processing failed for ride {ride_id}: {exc}")
+            print(traceback_text)
     except Exception as e:
         print(f"Setup error in background processing for ride {ride_id}: {e}")
 
