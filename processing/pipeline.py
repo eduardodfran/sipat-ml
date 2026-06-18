@@ -12,6 +12,16 @@ from supabase import Client, create_client
 from ultralytics import YOLO
 from utils.geo_sync import interpolate_coordinate_at_time
 
+
+_supabase_client: Client | None = None
+
+
+def _get_supabase() -> Client:
+    global _supabase_client
+    if _supabase_client is None:
+        _supabase_client = create_client(SUPABASE_URL, SERVICE_KEY)
+    return _supabase_client
+
 # 1. Dynamically locate and load the .env file at the root level
 current_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(current_dir, "..", ".env")
@@ -126,10 +136,8 @@ def _raise_friendly_postgrest_error(action: str, error: APIError) -> None:
 
     raise RuntimeError(summary) from error
 
-# 3. Initialize Supabase
 _validate_supabase_config(SUPABASE_URL, SERVICE_KEY)
-supabase: Client = create_client(SUPABASE_URL, SERVICE_KEY)
-print("🔑 Supabase client initialized using service role key")
+print("🔑 Supabase configuration validated")
 
 # 4. Load your custom-trained YOLO26 model
 model = YOLO("../weights/best.pt")
@@ -199,7 +207,7 @@ def process_and_upload_results(raw_batch, ride_id):
     # Bulk insert raw data points into Supabase
     print(f"📡 Uploading {len(raw_batch)} raw frame detections to Supabase database...")
     try:
-        supabase.table("raw_detections").insert(raw_batch).execute()
+        _get_supabase().table("raw_detections").insert(raw_batch).execute()
     except APIError as e:
         _raise_friendly_postgrest_error("inserting into raw_detections", e)
 
@@ -212,7 +220,7 @@ def process_and_upload_results(raw_batch, ride_id):
         for pin in clean_pins:
             pin["ride_id"] = ride_id
             try:
-                supabase.table("verified_potholes").insert(pin).execute()
+                _get_supabase().table("verified_potholes").insert(pin).execute()
             except APIError as e:
                 _raise_friendly_postgrest_error("inserting into verified_potholes", e)
         print(f"🚀 Success! Generated {len(clean_pins)} unique map pins inside 'verified_potholes' table.")
