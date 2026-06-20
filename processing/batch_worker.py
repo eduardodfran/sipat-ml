@@ -277,7 +277,7 @@ def _fetch_verified_potholes(supabase: Client) -> list[dict[str, Any]]:
     response = (
         supabase.schema("public")
         .from_("verified_potholes")
-        .select("id, consolidated_latitude, consolidated_longitude, worst_severity, total_detection_hits, status, updated_at")
+        .select("id, consolidated_latitude, consolidated_longitude, worst_severity, total_detection_hits, status, updated_at, user_detections")
         .execute()
     )
     return response.data or []
@@ -306,6 +306,29 @@ def _find_matching_verified_pothole(
             closest_match = pothole
 
     return closest_match
+
+
+def _merge_user_detections(
+    existing_list: list[dict[str, Any]],
+    incoming_list: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    best: dict[str, float] = {}
+    for entry in existing_list:
+        uid = entry.get("user_id")
+        ts = entry.get("video_timestamp")
+        if uid and ts is not None:
+            if uid not in best or ts < best[uid]:
+                best[uid] = ts
+    for entry in incoming_list:
+        uid = entry.get("user_id")
+        ts = entry.get("video_timestamp")
+        if uid and ts is not None:
+            if uid not in best or ts < best[uid]:
+                best[uid] = ts
+    return sorted(
+        [{"user_id": uid, "video_timestamp": ts} for uid, ts in best.items()],
+        key=lambda x: x["video_timestamp"],
+    )
 
 
 def _sync_verified_potholes(
@@ -344,10 +367,20 @@ def _sync_verified_potholes(
             current_severity = matched_pothole.get("worst_severity") or "Minor"
             severity_order = {"Minor": 0, "Moderate": 1, "Severe": 2}
             updated_severity = new_severity if severity_order.get(new_severity, 0) >= severity_order.get(current_severity, 0) else current_severity
+            existing_user_detections = (
+                matched_pothole.get("user_detections")
+                if isinstance(matched_pothole.get("user_detections"), list)
+                else []
+            )
+            merged_user_detections = _merge_user_detections(
+                existing_user_detections,
+                pothole.get("user_detections") or [],
+            )
             update_payload = {
                 "total_detection_hits": updated_hits,
                 "worst_severity": updated_severity,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
+                "user_detections": merged_user_detections,
             }
             supabase.schema("public").from_("verified_potholes").update(
                 update_payload
@@ -355,11 +388,13 @@ def _sync_verified_potholes(
             matched_pothole["total_detection_hits"] = updated_hits
             matched_pothole["worst_severity"] = updated_severity
             matched_pothole["updated_at"] = datetime.now(timezone.utc).isoformat()
+            matched_pothole["user_detections"] = merged_user_detections
             touched_potholes += 1
             continue
 
         total_hits = new_hits
         severity = new_severity
+        new_user_detections = pothole.get("user_detections") or []
         insert_payload = {
             "ride_id": ride_id,
             "consolidated_latitude": lat,
@@ -367,6 +402,7 @@ def _sync_verified_potholes(
             "worst_severity": severity,
             "total_detection_hits": total_hits,
             "status": "queued",
+            "user_detections": new_user_detections,
         }
         supabase.schema("public").from_("verified_potholes").insert(
             insert_payload
@@ -380,6 +416,7 @@ def _sync_verified_potholes(
                 "total_detection_hits": total_hits,
                 "status": "queued",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
+                "user_detections": new_user_detections,
             }
         )
         touched_potholes += 1

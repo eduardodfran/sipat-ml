@@ -45,6 +45,27 @@ def cluster_pothole_detections(raw_data_list, max_distance_meters=3.0, min_detec
             "detection_count": total_hits,
             "image_url": image_url,
             "max_area_m2": float(cluster_subset["phys_area_m2"].max()),
+            "user_detections": _aggregate_user_detections(cluster_subset),
         })
 
     return cleaned_potholes
+
+
+def _aggregate_user_detections(cluster_subset: "pd.DataFrame") -> list[dict]:
+    """Aggregate unique user_ids with earliest video_timestamp per user."""
+    if "user_id" not in cluster_subset.columns:
+        return []
+
+    best: dict[str, float] = {}
+    for _, row in cluster_subset.iterrows():
+        uid = row.get("user_id")
+        ts = row.get("video_timestamp")
+        if uid is None or ts is None:
+            continue
+        if uid not in best or ts < best[uid]:
+            best[uid] = ts
+
+    return sorted(
+        [{"user_id": uid, "video_timestamp": ts} for uid, ts in best.items()],
+        key=lambda x: x["video_timestamp"],
+    )

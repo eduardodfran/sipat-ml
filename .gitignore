@@ -58,3 +58,5 @@ weights/*.engine
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+*.sql
