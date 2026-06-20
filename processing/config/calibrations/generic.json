@@ -1,0 +1,11 @@
+{
+  "fx": 1200.0,
+  "fy": 1200.0,
+  "cx": 960.0,
+  "cy": 540.0,
+  "height_m": 1.3,
+  "pitch_deg": 6.0,
+  "roll_deg": 0.0,
+  "yaw_deg": 0.0,
+  "notes": "Generic calibration for 1920x1080 video. Assumes phone mounted ~1.3m above road, tilted down ~6deg. Replace fx/fy/cx/cy with actual phone intrinsics."
+}

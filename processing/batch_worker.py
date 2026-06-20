@@ -29,8 +29,18 @@ load_dotenv(dotenv_path=ENV_PATH)
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
 MERGE_RADIUS_METERS = 15.0
 
+# DPWH D.O. No. 120 s. 2019 adopts FHWA LTPP Distress ID Manual for pothole
+# severity, which classifies by depth (<25mm Low, 25-50mm Moderate, >50mm High).
+# Since only plan area is available, map via PAVER (US Army) combined diameter/depth
+# matrix: 200mm diam (~0.03m^2) and 460mm diam (~0.17m^2) boundaries.
+# DPWH minimum documented pothole area: ~0.02m^2 (FHWA min plan dimension 150mm).
+# Source: FHWA-RD-03-031 LTPP Distress ID Manual §8 Potholes;
+#         PAVER Road Asphalt Distress Manual §13 Potholes Table 1.
 SEVERITY_MINOR_AREA_M2 = 0.03
-SEVERITY_MODERATE_AREA_M2 = 0.12
+SEVERITY_MODERATE_AREA_M2 = 0.17
+
+CONFIDENCE_MODERATE_CAP = 0.35
+CONFIDENCE_SEVERE_CAP = 0.50
 
 
 def _phys_area_to_severity(area_m2: float | None) -> str:
@@ -354,9 +364,15 @@ def _sync_verified_potholes(
         max_area_m2 = pothole.get("max_area_m2")
         ipm_severity = _phys_area_to_severity(max_area_m2)
         frame_severity = pothole.get("max_frame_severity", "Minor")
+        avg_confidence = pothole.get("avg_confidence", 0.0)
         severity_order = {"Minor": 0, "Moderate": 1, "Severe": 2}
         new_severity = frame_severity if severity_order.get(ipm_severity, 0) > severity_order.get(frame_severity, 0) else ipm_severity
-        print(f"  severity: ipm={ipm_severity} (area={max_area_m2}), frame={frame_severity} → final={new_severity}")
+        if avg_confidence < CONFIDENCE_MODERATE_CAP:
+            new_severity = "Minor"
+        elif avg_confidence < CONFIDENCE_SEVERE_CAP and severity_order.get(new_severity, 0) > 1:
+            new_severity = "Moderate"
+        print(f"  severity: ipm={ipm_severity} (area={max_area_m2}), frame={frame_severity}, "
+              f"conf={avg_confidence:.3f} → final={new_severity}")
         matched_pothole = _find_matching_verified_pothole(
             existing_potholes,
             lat,

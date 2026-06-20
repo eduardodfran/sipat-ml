@@ -7,6 +7,7 @@ import cv2
 from supabase import Client
 from ultralytics import YOLO
 
+from .utils.camera_calibration import load_calibration
 from .utils.damage_severity import calculate_severity
 from .utils.gps_processor import GPSProcessor
 from .utils.ipm_transformer import IPMTransformer
@@ -15,6 +16,7 @@ ANNOTATED_FRAMES_BUCKET = "detected-images"
 YOLO_CONFIDENCE = 0.25
 _IOU_THRESHOLD = 0.7
 FRAME_SKIP = 5
+_CALIBRATION = load_calibration()
 
 
 def _iou(box_a: list[float], box_b: list[float]) -> float:
@@ -85,7 +87,7 @@ class DetectionBatchBuilder:
                 current_frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
                 timestamp_seconds = current_frame_index / fps
                 if ipm is None:
-                    ipm = IPMTransformer(frame.shape[1], frame.shape[0])
+                    ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=_CALIBRATION)
                 results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
                 for result in results:
@@ -137,6 +139,18 @@ class DetectionBatchBuilder:
                             median_lat if is_stationary else None,
                             median_lng if is_stationary else None,
                         )
+                        try:
+                            confidence = _box.conf.item()
+                        except Exception:
+                            confidence = 0.0
+
+                        try:
+                            class_id = int(_box.cls.item())
+                            class_name = result.names.get(class_id, "unknown")
+                        except Exception:
+                            class_id = -1
+                            class_name = "unknown"
+
                         raw_detections_batch.append(
                             {
                                 "ride_id": self.ride_id,
@@ -147,6 +161,13 @@ class DetectionBatchBuilder:
                                 "severity": severity,
                                 "phys_area_m2": phys_area_m2,
                                 "image_url": image_url,
+                                "confidence": confidence,
+                                "bbox_x1": bbox[0],
+                                "bbox_y1": bbox[1],
+                                "bbox_x2": bbox[2],
+                                "bbox_y2": bbox[3],
+                                "class_id": class_id,
+                                "class_name": class_name,
                             }
                         )
 

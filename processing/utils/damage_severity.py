@@ -1,6 +1,13 @@
 def calculate_severity(bbox):
     """Calculate road damage severity based on bounding box area.
 
+    Frame-area heuristic: a pothole filling >2% of the image is Moderate,
+    >6% is Severe. These correspond roughly to DPWH/FHWA depth-based
+    thresholds at typical detection distances (5-15m).
+    DPWH D.O. No. 120 s. 2019 adopts FHWA LTPP (FHWA-RD-03-031) §8.
+    The IPM-based physical-area severity (batch_worker._phys_area_to_severity)
+    is the calibrated alternative; see its thresholds for DPWH-aligned values.
+
     Args:
         bbox: Normalized coordinates [xmin, ymin, xmax, ymax] (0.0 to 1.0).
 
