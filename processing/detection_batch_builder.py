@@ -12,8 +12,9 @@ from .utils.gps_processor import GPSProcessor
 from .utils.ipm_transformer import IPMTransformer
 
 ANNOTATED_FRAMES_BUCKET = "detected-images"
-YOLO_CONFIDENCE = 0.5
+YOLO_CONFIDENCE = 0.25
 _IOU_THRESHOLD = 0.7
+FRAME_SKIP = 5
 
 
 def _iou(box_a: list[float], box_b: list[float]) -> float:
@@ -77,6 +78,10 @@ class DetectionBatchBuilder:
                     break
 
                 frame_count += 1
+                if frame_count % FRAME_SKIP != 0:
+                    prev_frame_boxes = []
+                    continue
+
                 current_frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
                 timestamp_seconds = current_frame_index / fps
                 if ipm is None:

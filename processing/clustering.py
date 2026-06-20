@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import DBSCAN
 
+_SEVERITY_ORDER = {"Minor": 0, "Moderate": 1, "Severe": 2}
+
 
 def cluster_pothole_detections(raw_data_list, max_distance_meters=3.0, min_detections=3):
     """
@@ -39,16 +41,41 @@ def cluster_pothole_detections(raw_data_list, max_distance_meters=3.0, min_detec
             if len(non_null) > 0:
                 image_url = non_null.iloc[0]
 
+        max_area = _max_phys_area_across_rides(cluster_subset)
+        frame_sev = _max_frame_severity(cluster_subset)
+        print(f"  cluster: {total_hits} dets, area={max_area:.4f}m², frame_severity={frame_sev}")
+
         cleaned_potholes.append({
             "lat": round(centroid_lat, 6),
             "lng": round(centroid_lng, 6),
             "detection_count": total_hits,
             "image_url": image_url,
-            "max_area_m2": float(cluster_subset["phys_area_m2"].max()),
+            "max_area_m2": max_area,
+            "max_frame_severity": frame_sev,
             "user_detections": _aggregate_user_detections(cluster_subset),
         })
 
     return cleaned_potholes
+
+
+def _max_phys_area_across_rides(cluster_subset: "pd.DataFrame") -> float:
+    """Per-ride MAX phys_area_m2, then MAX across rides (dedup per ride)."""
+    if "phys_area_m2" not in cluster_subset.columns or "ride_id" not in cluster_subset.columns:
+        return 0.0
+    per_ride_max = cluster_subset.groupby("ride_id")["phys_area_m2"].max()
+    return float(per_ride_max.max())
+
+
+def _max_frame_severity(cluster_subset: "pd.DataFrame") -> str:
+    """Highest frame-area severity across all detections in the cluster."""
+    if "severity" not in cluster_subset.columns:
+        return "Minor"
+    max_sev = "Minor"
+    for _, row in cluster_subset.iterrows():
+        s = str(row.get("severity", "Minor"))
+        if _SEVERITY_ORDER.get(s, 0) > _SEVERITY_ORDER.get(max_sev, 0):
+            max_sev = s
+    return max_sev
 
 
 def _aggregate_user_detections(cluster_subset: "pd.DataFrame") -> list[dict]:

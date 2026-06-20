@@ -267,10 +267,8 @@ def _insert_raw_detections(supabase: Client, raw_batch: list[dict[str, Any]]) ->
         print("No raw detections were generated for this ride")
         return
 
-    insert_data = [{k: v for k, v in item.items() if k != "phys_area_m2"} for item in raw_batch]
-
     print(f"Uploading {len(raw_batch)} raw frame detections to public.raw_detections...")
-    supabase.schema("public").from_("raw_detections").insert(insert_data).execute()
+    supabase.schema("public").from_("raw_detections").insert(raw_batch).execute()
 
 
 def _fetch_verified_potholes(supabase: Client) -> list[dict[str, Any]]:
@@ -354,7 +352,11 @@ def _sync_verified_potholes(
         lng = float(pothole["lng"])
         new_hits = int(pothole.get("detection_count") or 0)
         max_area_m2 = pothole.get("max_area_m2")
-        new_severity = _phys_area_to_severity(max_area_m2)
+        ipm_severity = _phys_area_to_severity(max_area_m2)
+        frame_severity = pothole.get("max_frame_severity", "Minor")
+        severity_order = {"Minor": 0, "Moderate": 1, "Severe": 2}
+        new_severity = frame_severity if severity_order.get(ipm_severity, 0) > severity_order.get(frame_severity, 0) else ipm_severity
+        print(f"  severity: ipm={ipm_severity} (area={max_area_m2}), frame={frame_severity} → final={new_severity}")
         matched_pothole = _find_matching_verified_pothole(
             existing_potholes,
             lat,
@@ -365,7 +367,6 @@ def _sync_verified_potholes(
             current_hits = int(matched_pothole.get("total_detection_hits") or 0)
             updated_hits = current_hits + new_hits
             current_severity = matched_pothole.get("worst_severity") or "Minor"
-            severity_order = {"Minor": 0, "Moderate": 1, "Severe": 2}
             updated_severity = new_severity if severity_order.get(new_severity, 0) >= severity_order.get(current_severity, 0) else current_severity
             existing_user_detections = (
                 matched_pothole.get("user_detections")
