@@ -2,10 +2,17 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import DBSCAN
 
+from typing import Any
+
+
 _SEVERITY_ORDER = {"Minor": 0, "Moderate": 1, "Severe": 2}
 
 
-def cluster_pothole_detections(raw_data_list, max_distance_meters=15.0, min_detections=3):
+def cluster_pothole_detections(
+    raw_data_list: list[dict[str, Any]],
+    max_distance_meters: float = 15.0,
+    min_detections: int = 3,
+) -> list[dict[str, Any]]:
     """
     Clusters frame-by-frame GPS detections into unique, real-world pothole entities.
 
@@ -109,6 +116,6 @@ def _aggregate_user_detections(cluster_subset: "pd.DataFrame") -> list[dict]:
 
 def _avg_confidence(cluster_subset: "pd.DataFrame") -> float:
     """Average YOLO confidence across all detections in the cluster."""
-    if "confidence" not in cluster_subset.columns:
+    if "confidence" not in cluster_subset.columns or cluster_subset["confidence"].empty:
         return 0.0
     return float(cluster_subset["confidence"].mean())

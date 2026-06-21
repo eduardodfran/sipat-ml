@@ -16,8 +16,14 @@ from utils.geo_math import (
 
 try:
     from clustering import cluster_pothole_detections
+    from clustering import (
+        _avg_confidence,
+        _max_phys_area_across_rides,
+    )
 except ImportError:
     cluster_pothole_detections = None
+    _avg_confidence = None
+    _max_phys_area_across_rides = None
 
 
 # ----- calculate_severity -----
@@ -135,6 +141,68 @@ class TestClusterPotholeDetections:
         ]
         result = cluster_pothole_detections(data, max_distance_meters=3.0, min_detections=3)
         assert result[0]["max_area_m2"] == 3.5
+
+    def test_cluster_includes_avg_confidence(self):
+        if cluster_pothole_detections is None:
+            pytest.skip("clustering module not importable")
+        data = [
+            {"lat": 14.55480, "lng": 121.04810, "phys_area_m2": 0.5, "image_url": None, "confidence": 0.8},
+            {"lat": 14.55481, "lng": 121.04811, "phys_area_m2": 0.6, "image_url": None, "confidence": 0.6},
+            {"lat": 14.55482, "lng": 121.04812, "phys_area_m2": 0.4, "image_url": None, "confidence": 0.4},
+        ]
+        result = cluster_pothole_detections(data, max_distance_meters=3.0, min_detections=3)
+        assert len(result) == 1
+        assert "avg_confidence" in result[0]
+        assert result[0]["avg_confidence"] == pytest.approx(0.6, abs=0.01)
+
+
+# ----- clustering helpers -----
+
+class TestClusteringHelpers:
+    def test_avg_confidence_with_column(self):
+        if _avg_confidence is None:
+            pytest.skip("clustering module not importable")
+        import pandas as pd
+        df = pd.DataFrame({"confidence": [0.9, 0.5, 0.1]})
+        assert _avg_confidence(df) == pytest.approx(0.5)
+
+    def test_avg_confidence_without_column(self):
+        if _avg_confidence is None:
+            pytest.skip("clustering module not importable")
+        import pandas as pd
+        df = pd.DataFrame({"other": [1, 2]})
+        assert _avg_confidence(df) == 0.0
+
+    def test_avg_confidence_empty(self):
+        if _avg_confidence is None:
+            pytest.skip("clustering module not importable")
+        import pandas as pd
+        df = pd.DataFrame({"confidence": []})
+        assert _avg_confidence(df) == 0.0
+
+    def test_max_phys_area_with_ride_id(self):
+        if _max_phys_area_across_rides is None:
+            pytest.skip("clustering module not importable")
+        import pandas as pd
+        df = pd.DataFrame({
+            "phys_area_m2": [1.0, 5.0, 2.0, 3.0],
+            "ride_id": ["a", "a", "b", "b"],
+        })
+        assert _max_phys_area_across_rides(df) == pytest.approx(5.0)
+
+    def test_max_phys_area_without_ride_id(self):
+        if _max_phys_area_across_rides is None:
+            pytest.skip("clustering module not importable")
+        import pandas as pd
+        df = pd.DataFrame({"phys_area_m2": [1.0, 5.0, 2.0]})
+        assert _max_phys_area_across_rides(df) == pytest.approx(5.0)
+
+    def test_max_phys_area_without_column(self):
+        if _max_phys_area_across_rides is None:
+            pytest.skip("clustering module not importable")
+        import pandas as pd
+        df = pd.DataFrame({"other": [1, 2]})
+        assert _max_phys_area_across_rides(df) == 0.0
 
 
 # ----- math helpers (batch_worker) -----

@@ -127,7 +127,8 @@ class DetectionBatchBuilder:
                         try:
                             severity = calculate_severity(bbox)
                             phys_area_m2 = ipm.compute_phys_area(bbox)
-                        except Exception:
+                        except Exception as e:
+                            print(f"  severity/IPM error for bbox {bbox}: {e}")
                             pass
 
                         lat, lng = self._get_detection_coords(

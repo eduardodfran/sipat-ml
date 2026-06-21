@@ -68,33 +68,28 @@ class IPMTransformer:
         cos_r, sin_r = math.cos(roll_rad), math.sin(roll_rad)
         cos_y, sin_y = math.cos(yaw_rad), math.sin(yaw_rad)
 
+        R_yaw = np.array([
+            [cos_y, 0, sin_y],
+            [0, 1, 0],
+            [-sin_y, 0, cos_y],
+        ])
+        R_pitch = np.array([
+            [1, 0, 0],
+            [0, cos_p, -sin_p],
+            [0, sin_p, cos_p],
+        ])
+        R_roll = np.array([
+            [cos_r, -sin_r, 0],
+            [sin_r, cos_r, 0],
+            [0, 0, 1],
+        ])
+        R = R_roll @ R_pitch @ R_yaw
+
         img_points = []
         for x_road, z_road in road_corners:
             y_road = 0.0
             X = np.array([x_road, -cal.height_m, z_road], dtype=np.float64)
-
-            R_yaw = np.array([
-                [cos_y, 0, sin_y],
-                [0, 1, 0],
-                [-sin_y, 0, cos_y],
-            ])
-            X = R_yaw @ X
-
-            R_pitch = np.array([
-                [1, 0, 0],
-                [0, cos_p, -sin_p],
-                [0, sin_p, cos_p],
-            ])
-            X = R_pitch @ X
-
-            R_roll = np.array([
-                [cos_r, -sin_r, 0],
-                [sin_r, cos_r, 0],
-                [0, 0, 1],
-            ])
-            X = R_roll @ X
-
-            x_c, y_c, z_c = X
+            x_c, y_c, z_c = R @ X
             if z_c <= 0:
                 continue
             u = cal.fx * x_c / z_c + cal.cx
