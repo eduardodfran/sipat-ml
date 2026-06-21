@@ -1,3 +1,14 @@
+"""
+DEPRECATED — Use pipeline.worker.RideProcessor instead.
+
+This file is the original standalone processing prototype. All new development
+should use pipeline.worker (RideProcessor class) which integrates with
+batch_worker's Supabase queue system, DetectionBatchBuilder, and proper
+severity/IPM/confidence pipelines.
+
+Kept as a dev/test harness reference. Will be removed in a future cleanup.
+"""
+
 import base64
 import json
 import os

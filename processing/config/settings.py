@@ -1,0 +1,42 @@
+import os
+from pathlib import Path
+
+CURRENT_DIR = Path(__file__).resolve().parent.parent
+
+# ---- YOLO model ----
+MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
+YOLO_CONFIDENCE = 0.25
+_IOU_THRESHOLD = 0.7
+FRAME_SKIP = 5
+
+# ---- clustering & merge radius ----
+MERGE_RADIUS_METERS = 15.0
+CLUSTER_MIN_DETECTIONS = 3
+
+# ---- DPWH-aligned severity thresholds (FHWA LTPP / PAVER derived) ----
+# DPWH D.O. No. 120 s. 2019 adopts FHWA LTPP Distress ID Manual for pothole
+# severity, which classifies by depth (<25mm Low, 25-50mm Moderate, >50mm High).
+# Since only plan area is available, map via PAVER (US Army) combined diameter/depth
+# matrix: 200mm diam (~0.03m^2) and 460mm diam (~0.17m^2) boundaries.
+# Source: FHWA-RD-03-031 LTPP Distress ID Manual §8 Potholes;
+#         PAVER Road Asphalt Distress Manual §13 Potholes Table 1.
+SEVERITY_MINOR_AREA_M2 = 0.03
+SEVERITY_MODERATE_AREA_M2 = 0.17
+
+# ---- confidence-based severity capping ----
+CONFIDENCE_MODERATE_CAP = 0.35
+CONFIDENCE_SEVERE_CAP = 0.50
+
+# ---- IPM defaults ----
+DEFAULT_NEAR_METERS = 3.0
+DEFAULT_FAR_METERS = 25.0
+DEFAULT_ROAD_WIDTH_METERS = 6.0
+DEFAULT_PIXELS_PER_METER = 100.0
+
+# ---- storage ----
+ANNOTATED_FRAMES_BUCKET = "detected-images"
+RAW_DATA_BUCKET = "raw-road-data"
+
+# ---- geo constants ----
+EARTH_RADIUS_METERS = 6371008.8
+STATIONARY_THRESHOLD_METERS = 12.0

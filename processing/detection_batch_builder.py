@@ -7,15 +7,13 @@ import cv2
 from supabase import Client
 from ultralytics import YOLO
 
-from .utils.camera_calibration import load_calibration
-from .utils.damage_severity import calculate_severity
-from .utils.gps_processor import GPSProcessor
-from .utils.ipm_transformer import IPMTransformer
+from config.settings import ANNOTATED_FRAMES_BUCKET, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP
+from core.severity import frame_area_pct_to_severity
+from utils.camera_calibration import load_calibration
+from utils.damage_severity import calculate_severity as frame_area_pct_to_severity
+from utils.gps_processor import GPSProcessor
+from utils.ipm_transformer import IPMTransformer
 
-ANNOTATED_FRAMES_BUCKET = "detected-images"
-YOLO_CONFIDENCE = 0.25
-_IOU_THRESHOLD = 0.7
-FRAME_SKIP = 5
 _CALIBRATION = load_calibration()
 
 
@@ -125,7 +123,7 @@ class DetectionBatchBuilder:
                         severity = "Minor"
                         phys_area_m2 = 0.0
                         try:
-                            severity = calculate_severity(bbox)
+                            severity = frame_area_pct_to_severity(bbox)
                             phys_area_m2 = ipm.compute_phys_area(bbox)
                         except Exception as e:
                             print(f"  severity/IPM error for bbox {bbox}: {e}")
