@@ -1,42 +1,33 @@
 import os
-import threading
-import traceback
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
-from starlette.requests import Request
 
-from .common import _get_supabase, _validate_token
-from .rate_limiter import DELETE_LIMIT, HEALTH_LIMIT, PROCESS_LIMIT, READ_LIMIT, limiter
+from .api.routes.process import router as process_router
+from .api.routes.rides import router as rides_router
+from .rate_limiter import limiter
+from .services.supabase_client import get_supabase_service
 from .upload_api import router as upload_router
 
 
 def _recover_stale_processing_rides() -> None:
     try:
-        supabase = _get_supabase()
-        response = (
-            supabase.table("rides_metadata")
-            .select("id")
-            .eq("status", "processing")
-            .execute()
-        )
-        stale = response.data or []
-        if not stale:
+        svc = get_supabase_service()
+        rows = svc.select("rides_metadata", "id", status="processing")
+        if not rows:
             return
-        ids = [row["id"] for row in stale if row.get("id")]
+        ids = [row["id"] for row in rows if row.get("id")]
         print(f"Recovering {len(ids)} stale processing ride(s): {ids}")
         for ride_id in ids:
-            supabase.table("rides_metadata").update(
-                {
-                    "status": "failed",
-                    "error_log": "Server restarted while ride was being processed",
-                }
-            ).eq("id", ride_id).execute()
+            svc.update(
+                "rides_metadata",
+                {"status": "failed", "error_log": "Server restarted while ride was being processed"},
+                id=ride_id,
+            )
     except Exception as e:
         print(f"Failed to recover stale processing rides: {e}")
 
@@ -69,154 +60,8 @@ app.add_middleware(
 app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(upload_router)
-
-
-class ProcessResponse(BaseModel):
-    status: str
-    ride_id: str
-    message: str
-
-
-class RideInfo(BaseModel):
-    id: str
-    user_id: str | None
-    video_bucket_path: str | None
-    gps_bucket_path: str | None
-    status: str
-    error_log: str | None
-    created_at: str | None
-
-
-def _run_process(ride_id: str) -> None:
-    from .batch_worker import (
-        _build_supabase_client,
-        _friendly_error_message,
-        _mark_failed,
-        _process_ride,
-    )
-
-    try:
-        supabase = _build_supabase_client()
-        response = supabase.table("rides_metadata").select("*").eq("id", ride_id).execute()
-        rows = response.data or []
-        if not rows:
-            print(f"Ride {ride_id} not found")
-            return
-        ride = rows[0]
-        ride["status"] = "processing"
-        try:
-            result = _process_ride(supabase, ride)
-            print(f"Completed ride {ride_id}: {result['raw_detection_count']} detections")
-        except Exception as exc:
-            error_message = _friendly_error_message(exc)
-            traceback_text = traceback.format_exc()
-            try:
-                _mark_failed(supabase, ride_id, error_message)
-            except Exception as mark_exc:
-                print(f"Failed to mark ride {ride_id} as failed: {mark_exc}")
-            print(f"Background processing failed for ride {ride_id}: {exc}")
-            print(traceback_text)
-    except Exception as e:
-        print(f"Setup error in background processing for ride {ride_id}: {e}")
-
-
-@app.post("/process/{ride_id}", response_model=ProcessResponse)
-@limiter.limit(PROCESS_LIMIT)
-async def process_ride(
-    request: Request, ride_id: str, authorization: str = Header(None)
-):
-    auth = _validate_token(authorization)
-    user_id = auth.get("user_id") or auth.get("sub")
-
-    supabase = _get_supabase()
-    response = supabase.table("rides_metadata").select("id,user_id,status").eq("id", ride_id).execute()
-    rows = response.data or []
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
-
-    ride = rows[0]
-    if ride.get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="You can only process your own rides")
-
-    current_status = ride.get("status", "")
-    if current_status == "processing":
-        raise HTTPException(status_code=409, detail="Ride is already being processed")
-    if current_status == "completed":
-        raise HTTPException(status_code=409, detail="Ride has already been processed")
-
-    supabase.table("rides_metadata").update({"status": "processing"}).eq("id", ride_id).execute()
-
-    thread = threading.Thread(target=_run_process, args=(ride_id,), daemon=True)
-    thread.start()
-
-    return ProcessResponse(
-        status="accepted",
-        ride_id=ride_id,
-        message="Processing started in background",
-    )
-
-
-@app.get("/rides")
-@limiter.limit(READ_LIMIT)
-async def list_rides(
-    request: Request, authorization: str = Header(None)
-):
-    auth = _validate_token(authorization)
-    user_id = auth.get("user_id") or auth.get("sub")
-    supabase = _get_supabase()
-    response = (
-        supabase.table("rides_metadata")
-        .select("id,user_id,video_bucket_path,gps_bucket_path,status,error_log,created_at")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return {"rides": response.data or []}
-
-
-@app.get("/rides/{ride_id}")
-@limiter.limit(READ_LIMIT)
-async def get_ride(
-    request: Request, ride_id: str, authorization: str = Header(None)
-):
-    auth = _validate_token(authorization)
-    user_id = auth.get("user_id") or auth.get("sub")
-
-    supabase = _get_supabase()
-    response = supabase.table("rides_metadata").select("*").eq("id", ride_id).execute()
-    rows = response.data or []
-    if not rows:
-        raise HTTPException(status_code=404, detail="Ride not found")
-
-    if rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Not your ride")
-
-    return {"ride": rows[0]}
-
-
-@app.delete("/rides/{ride_id}")
-@limiter.limit(DELETE_LIMIT)
-async def delete_ride(
-    request: Request, ride_id: str, authorization: str = Header(None)
-):
-    auth = _validate_token(authorization)
-    user_id = auth.get("user_id") or auth.get("sub")
-    supabase = _get_supabase()
-    ride = supabase.table("rides_metadata").select("user_id,video_bucket_path,gps_bucket_path").eq("id", ride_id).execute()
-    if not ride.data:
-        raise HTTPException(status_code=404, detail="Ride not found")
-    if ride.data[0]["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not your ride")
-    supabase.table("rides_metadata").delete().eq("id", ride_id).execute()
-    return {"status": "deleted"}
-
-
-@app.get("/health")
-@limiter.limit(HEALTH_LIMIT)
-async def health(
-    request: Request,
-):
-    return {"status": "ok"}
+app.include_router(rides_router)
+app.include_router(process_router)
 
 
 if __name__ == "__main__":

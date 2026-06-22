@@ -1,34 +1,26 @@
-import base64
-import json
-import os
+import subprocess
 import tempfile
-import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
-from azure.storage.blob import BlobServiceClient
-from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 from storage3.utils import StorageException
-from supabase import Client, create_client
 from ultralytics import YOLO
 
-from config.settings import (
+from ..config.settings import (
     MODEL_PATH,
     MERGE_RADIUS_METERS,
-    CLUSTER_MIN_DETECTIONS,
     RAW_DATA_BUCKET,
 )
-from core.clusterer import PotholeClusterer
-from core.severity import area_to_severity, fuse_severity, escalate_severity
-from detection_batch_builder import DetectionBatchBuilder
-from utils.geo_math import haversine_distance_meters
-from utils.gps_processor import GPSProcessor
-
-load_dotenv()
+from ..core.clusterer import PotholeClusterer
+from ..core.severity import area_to_severity, fuse_severity, escalate_severity
+from ..detection_batch_builder import DetectionBatchBuilder
+from ..services.blob_storage import BlobStorageService, get_blob_storage_service
+from ..services.supabase_client import SupabaseService, get_supabase_service
+from ..utils.geo_math import haversine_distance_meters
+from ..utils.gps_processor import GPSProcessor
 
 
 class RideProcessor:
@@ -38,73 +30,19 @@ class RideProcessor:
     clustering → syncing with DB → marking completion.
     """
 
-    def __init__(self, supabase_url: str | None = None, service_key: str | None = None) -> None:
-        self.supabase_url = (supabase_url or os.getenv("SUPABASE_URL") or "").strip()
-        self.service_key = (service_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
-        self.azure_conn_str = (os.getenv("AZURE_STORAGE_CONNECTION_STRING") or "").strip()
-
-        if not self.supabase_url or not self.service_key:
-            raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
-
-        self._validate_config()
-        self._supabase: Client = create_client(self.supabase_url, self.service_key)
-        self._blob_service: BlobServiceClient | None = None
+    def __init__(
+        self,
+        supabase: SupabaseService | None = None,
+        blob: BlobStorageService | None = None,
+    ) -> None:
+        self._svc = supabase or get_supabase_service()
+        self._blob = blob or get_blob_storage_service()
         self._model: YOLO | None = None
 
-    # ---- config validation ----
-
-    @staticmethod
-    def _project_ref_from_url(url: str) -> str | None:
-        try:
-            hostname = urlparse(url).hostname or ""
-        except Exception:
-            return None
-        if hostname.endswith(".supabase.co"):
-            return hostname.split(".")[0]
-        return None
-
-    @staticmethod
-    def _jwt_payload(token: str) -> dict[str, Any] | None:
-        parts = token.split(".")
-        if len(parts) < 2:
-            return None
-        payload_b64 = parts[1]
-        payload_b64 += "=" * (-len(payload_b64) % 4)
-        try:
-            payload_bytes = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
-            payload = json.loads(payload_bytes.decode("utf-8"))
-        except Exception:
-            return None
-        return payload if isinstance(payload, dict) else None
-
-    def _validate_config(self) -> None:
-        if self.service_key.count(".") < 2:
-            raise ValueError("SUPABASE_SERVICE_ROLE_KEY does not look like a Supabase JWT")
-        url_ref = self._project_ref_from_url(self.supabase_url)
-        payload = self._jwt_payload(self.service_key) or {}
-        key_ref = payload.get("ref") if isinstance(payload.get("ref"), str) else None
-        role = payload.get("role") if isinstance(payload.get("role"), str) else None
-        if role and role != "service_role":
-            raise ValueError(f"SUPABASE_SERVICE_ROLE_KEY role is {role!r}, expected service_role")
-        if url_ref and key_ref and url_ref != key_ref:
-            raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY belong to different projects")
-
-    # ---- blob storage ----
-
     @property
-    def blob_service(self) -> BlobServiceClient:
-        if self._blob_service is None:
-            if not self.azure_conn_str:
-                raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING not set")
-            self._blob_service = BlobServiceClient.from_connection_string(self.azure_conn_str)
-        return self._blob_service
-
-    def _download_file(self, object_path: str, temp_dir: Path) -> Path:
-        blob_client = self.blob_service.get_blob_client(container=RAW_DATA_BUCKET, blob=object_path)
-        download_stream = blob_client.download_blob(timeout=120)
-        local_path = temp_dir / Path(object_path).name
-        local_path.write_bytes(download_stream.readall())
-        return local_path
+    def _supabase(self):
+        """Direct Supabase client for DetectionBatchBuilder compatibility."""
+        return self._svc.client
 
     # ---- model ----
 
@@ -117,7 +55,7 @@ class RideProcessor:
             self._model = YOLO(str(path))
         return self._model
 
-    # ---- ride querying ----
+    # ---- ride path resolution ----
 
     @staticmethod
     def _first_present_value(row: dict[str, Any], keys: list[str]) -> str | None:
@@ -153,7 +91,6 @@ class RideProcessor:
     def _repair_video(video_path: Path) -> Path:
         repaired = video_path.parent / f"repaired_{video_path.name}"
         try:
-            import subprocess
             subprocess.run(
                 ["ffmpeg", "-y", "-i", str(video_path), "-c", "copy", str(repaired)],
                 capture_output=True, timeout=300,
@@ -167,8 +104,10 @@ class RideProcessor:
     # ---- DB operations ----
 
     def claim_oldest_queued_ride(self) -> dict[str, Any] | None:
+        svc = self._svc
+        client = svc.client
         response = (
-            self._supabase.table("rides_metadata")
+            client.table("rides_metadata")
             .select("*")
             .eq("status", "queued")
             .order("created_at", desc=False)
@@ -182,29 +121,26 @@ class RideProcessor:
         ride_id = ride.get("id")
         if not ride_id:
             raise KeyError("Claimed ride row has no id column")
-        self._supabase.table("rides_metadata").update({"status": "processing"}).eq("id", ride_id).execute()
+        svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
         ride["status"] = "processing"
         return ride
 
     def _mark_failed(self, ride_id: str, error_message: str) -> None:
-        self._supabase.table("rides_metadata").update(
-            {"status": "failed", "error_log": error_message}
-        ).eq("id", ride_id).execute()
+        self._svc.update("rides_metadata", {"status": "failed", "error_log": error_message}, id=ride_id)
 
     def _mark_completed(self, ride_id: str) -> None:
-        self._supabase.table("rides_metadata").update({"status": "completed"}).eq("id", ride_id).execute()
+        self._svc.update("rides_metadata", {"status": "completed"}, id=ride_id)
 
     def _insert_raw_detections(self, raw_batch: list[dict[str, Any]]) -> None:
         if not raw_batch:
             return
         try:
-            self._supabase.table("raw_detections").insert(raw_batch).execute()
+            self._svc.insert("raw_detections", raw_batch)
         except APIError as e:
             raise RuntimeError(self._friendly_error(e, "inserting raw_detections")) from e
 
     def _fetch_verified_potholes(self) -> list[dict[str, Any]]:
-        response = self._supabase.table("verified_potholes").select("*").execute()
-        return response.data or []
+        return self._svc.select("verified_potholes")
 
     @staticmethod
     def _friendly_error(exc: Exception, action: str) -> str:
@@ -268,6 +204,7 @@ class RideProcessor:
 
         existing = self._fetch_verified_potholes()
         touched = 0
+        client = self._svc.client
 
         for pothole in clustered:
             lat = float(pothole["lat"])
@@ -278,7 +215,7 @@ class RideProcessor:
             conf = pothole.get("avg_confidence", 0.0)
             final_sev = fuse_severity(ipm_sev, frame_sev, conf)
 
-            print(f"  severity: ipm={ipm_sev}, frame={frame_sev}, conf={conf:.3f} → final={final_sev}")
+            print(f"  severity: ipm={ipm_sev}, frame={frame_sev}, conf={conf:.3f} -> final={final_sev}")
 
             match = self._find_matching_pothole(existing, lat, lng)
 
@@ -291,7 +228,7 @@ class RideProcessor:
                     match.get("user_detections") if isinstance(match.get("user_detections"), list) else [],
                     pothole.get("user_detections") or [],
                 )
-                self._supabase.schema("public").from_("verified_potholes").update({
+                client.schema("public").from_("verified_potholes").update({
                     "total_detection_hits": current_hits + new_hits,
                     "worst_severity": merged_sev,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -301,7 +238,7 @@ class RideProcessor:
                 match["worst_severity"] = merged_sev
                 match["user_detections"] = merged_users
             else:
-                self._supabase.schema("public").from_("verified_potholes").insert({
+                client.schema("public").from_("verified_potholes").insert({
                     "ride_id": ride_id,
                     "consolidated_latitude": lat,
                     "consolidated_longitude": lng,
@@ -338,9 +275,15 @@ class RideProcessor:
 
         with tempfile.TemporaryDirectory(prefix=f"ride_{ride_id}_") as tmp:
             tmp_dir = Path(tmp)
-            video_local = self._download_file(video_path, tmp_dir)
+
+            video_bytes = self._blob.download_file(video_path, RAW_DATA_BUCKET)
+            video_local = tmp_dir / Path(video_path).name
+            video_local.write_bytes(video_bytes)
             video_local = self._repair_video(video_local)
-            gps_local = self._download_file(gps_path, tmp_dir)
+
+            gps_bytes = self._blob.download_file(gps_path, RAW_DATA_BUCKET)
+            gps_local = tmp_dir / Path(gps_path).name
+            gps_local.write_bytes(gps_bytes)
 
             gps_processor = GPSProcessor.from_json_file(gps_local)
             builder = DetectionBatchBuilder(
@@ -348,7 +291,7 @@ class RideProcessor:
                 user_id=str(user_id) if user_id is not None else None,
                 supabase=self._supabase,
                 model=self.model,
-                supabase_url=self.supabase_url,
+                supabase_url=self._svc.url,
             )
             raw_batch = builder.build(video_local, gps_processor)
             self._insert_raw_detections(raw_batch)
@@ -385,12 +328,11 @@ class RideProcessor:
             raise RuntimeError(error) from exc
 
     def process_by_id(self, ride_id: str) -> dict[str, Any]:
-        response = self._supabase.table("rides_metadata").select("*").eq("id", ride_id).execute()
-        rows = response.data or []
+        rows = self._svc.select("rides_metadata", "*", id=ride_id)
         if not rows:
             raise KeyError(f"Ride {ride_id} not found")
         ride = rows[0]
-        self._supabase.table("rides_metadata").update({"status": "processing"}).eq("id", ride_id).execute()
+        self._svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
         ride["status"] = "processing"
         try:
             return self.process_ride(ride)

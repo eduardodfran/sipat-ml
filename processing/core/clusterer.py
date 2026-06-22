@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import DBSCAN
 
-from config.settings import EARTH_RADIUS_METERS, MERGE_RADIUS_METERS, CLUSTER_MIN_DETECTIONS
-from core.severity import severity_value
+from ..config.settings import EARTH_RADIUS_METERS, MERGE_RADIUS_METERS, CLUSTER_MIN_DETECTIONS
+from .severity import severity_value
 
 
 class PotholeClusterer:

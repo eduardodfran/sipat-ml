@@ -48,4 +48,4 @@ jobs:
         run: pip install numpy pandas scikit-learn pytest
 
       - name: Run unit tests
-        run: pytest processing/test_unit.py processing/test_geo_sync.py -v
+        run: pytest tests/test_unit.py tests/test_geo_sync.py -v

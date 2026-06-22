@@ -1,29 +1,19 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from utils.damage_severity import calculate_severity
+from core.clusterer import PotholeClusterer, _avg_confidence, _max_phys_area
+from core.severity import calculate_severity
 from utils.geo_math import (
     bearing_degrees,
     haversine_distance_meters,
     is_stationary_gps_track,
 )
 
-try:
-    from clustering import cluster_pothole_detections
-    from clustering import (
-        _avg_confidence,
-        _max_phys_area_across_rides,
-    )
-except ImportError:
-    cluster_pothole_detections = None
-    _avg_confidence = None
-    _max_phys_area_across_rides = None
+
+def cluster_pothole_detections(raw_data_list, max_distance_meters=15.0, min_detections=3):
+    clusterer = PotholeClusterer(max_distance_meters, min_detections)
+    return clusterer.cluster(raw_data_list)
 
 
 # ----- calculate_severity -----
@@ -77,13 +67,9 @@ class TestCalculateSeverity:
 
 class TestClusterPotholeDetections:
     def test_empty_input_returns_empty_list(self):
-        if cluster_pothole_detections is None:
-            pytest.skip("clustering module not importable")
         assert cluster_pothole_detections([]) == []
 
     def test_single_cluster_of_three(self):
-        if cluster_pothole_detections is None:
-            pytest.skip("clustering module not importable")
         data = [
             {"lat": 14.55480, "lng": 121.04810, "phys_area_m2": 0.5, "image_url": None},
             {"lat": 14.55481, "lng": 121.04811, "phys_area_m2": 0.6, "image_url": None},
@@ -94,8 +80,6 @@ class TestClusterPotholeDetections:
         assert result[0]["detection_count"] == 3
 
     def test_two_separate_clusters(self):
-        if cluster_pothole_detections is None:
-            pytest.skip("clustering module not importable")
         data = [
             {"lat": 14.55480, "lng": 121.04810, "phys_area_m2": 1.0, "image_url": None},
             {"lat": 14.55481, "lng": 121.04811, "phys_area_m2": 1.0, "image_url": None},
@@ -110,8 +94,6 @@ class TestClusterPotholeDetections:
         assert hits == [3, 3]
 
     def test_fewer_than_min_detections_returns_empty(self):
-        if cluster_pothole_detections is None:
-            pytest.skip("clustering module not importable")
         data = [
             {"lat": 14.55480, "lng": 121.04810, "phys_area_m2": 1.0, "image_url": None},
             {"lat": 14.55481, "lng": 121.04811, "phys_area_m2": 1.0, "image_url": None},
@@ -120,8 +102,6 @@ class TestClusterPotholeDetections:
         assert result == []
 
     def test_image_url_propagates_to_cluster(self):
-        if cluster_pothole_detections is None:
-            pytest.skip("clustering module not importable")
         data = [
             {"lat": 14.55480, "lng": 121.04810, "phys_area_m2": 0.5, "image_url": "https://example.com/frame1.jpg"},
             {"lat": 14.55481, "lng": 121.04811, "phys_area_m2": 0.6, "image_url": None},
@@ -132,8 +112,6 @@ class TestClusterPotholeDetections:
         assert result[0]["image_url"] == "https://example.com/frame1.jpg"
 
     def test_phys_area_m2_max_computed(self):
-        if cluster_pothole_detections is None:
-            pytest.skip("clustering module not importable")
         data = [
             {"lat": 14.55480, "lng": 121.04810, "phys_area_m2": 1.2, "image_url": None},
             {"lat": 14.55481, "lng": 121.04811, "phys_area_m2": 3.5, "image_url": None},
@@ -143,8 +121,6 @@ class TestClusterPotholeDetections:
         assert result[0]["max_area_m2"] == 3.5
 
     def test_cluster_includes_avg_confidence(self):
-        if cluster_pothole_detections is None:
-            pytest.skip("clustering module not importable")
         data = [
             {"lat": 14.55480, "lng": 121.04810, "phys_area_m2": 0.5, "image_url": None, "confidence": 0.8},
             {"lat": 14.55481, "lng": 121.04811, "phys_area_m2": 0.6, "image_url": None, "confidence": 0.6},
@@ -160,49 +136,37 @@ class TestClusterPotholeDetections:
 
 class TestClusteringHelpers:
     def test_avg_confidence_with_column(self):
-        if _avg_confidence is None:
-            pytest.skip("clustering module not importable")
         import pandas as pd
         df = pd.DataFrame({"confidence": [0.9, 0.5, 0.1]})
         assert _avg_confidence(df) == pytest.approx(0.5)
 
     def test_avg_confidence_without_column(self):
-        if _avg_confidence is None:
-            pytest.skip("clustering module not importable")
         import pandas as pd
         df = pd.DataFrame({"other": [1, 2]})
         assert _avg_confidence(df) == 0.0
 
     def test_avg_confidence_empty(self):
-        if _avg_confidence is None:
-            pytest.skip("clustering module not importable")
         import pandas as pd
         df = pd.DataFrame({"confidence": []})
         assert _avg_confidence(df) == 0.0
 
     def test_max_phys_area_with_ride_id(self):
-        if _max_phys_area_across_rides is None:
-            pytest.skip("clustering module not importable")
         import pandas as pd
         df = pd.DataFrame({
             "phys_area_m2": [1.0, 5.0, 2.0, 3.0],
             "ride_id": ["a", "a", "b", "b"],
         })
-        assert _max_phys_area_across_rides(df) == pytest.approx(5.0)
+        assert _max_phys_area(df) == pytest.approx(5.0)
 
     def test_max_phys_area_without_ride_id(self):
-        if _max_phys_area_across_rides is None:
-            pytest.skip("clustering module not importable")
         import pandas as pd
         df = pd.DataFrame({"phys_area_m2": [1.0, 5.0, 2.0]})
-        assert _max_phys_area_across_rides(df) == pytest.approx(5.0)
+        assert _max_phys_area(df) == pytest.approx(5.0)
 
     def test_max_phys_area_without_column(self):
-        if _max_phys_area_across_rides is None:
-            pytest.skip("clustering module not importable")
         import pandas as pd
         df = pd.DataFrame({"other": [1, 2]})
-        assert _max_phys_area_across_rides(df) == 0.0
+        assert _max_phys_area(df) == 0.0
 
 
 # ----- math helpers (batch_worker) -----

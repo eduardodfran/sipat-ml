@@ -29,4 +29,4 @@ ignore_missing_imports = true
 disable_error_code = ["import"]
 
 [tool.pytest.ini_options]
-testpaths = ["processing"]
+testpaths = ["tests"]

@@ -1,6 +1,6 @@
 from typing import Any
 
-from config.settings import (
+from ..config.settings import (
     CONFIDENCE_MODERATE_CAP,
     CONFIDENCE_SEVERE_CAP,
     SEVERITY_MINOR_AREA_M2,
@@ -57,3 +57,8 @@ def fuse_severity(
 def escalate_severity(current: str, incoming: str) -> str:
     """Return the higher (worse) of two severities."""
     return incoming if severity_value(incoming) >= severity_value(current) else current
+
+
+# ---- backward-compat alias for utils.damage_severity ----
+
+calculate_severity = frame_area_pct_to_severity

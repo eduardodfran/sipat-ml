@@ -7,12 +7,11 @@ import cv2
 from supabase import Client
 from ultralytics import YOLO
 
-from config.settings import ANNOTATED_FRAMES_BUCKET, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP
-from core.severity import frame_area_pct_to_severity
-from utils.camera_calibration import load_calibration
-from utils.damage_severity import calculate_severity as frame_area_pct_to_severity
-from utils.gps_processor import GPSProcessor
-from utils.ipm_transformer import IPMTransformer
+from .config.settings import ANNOTATED_FRAMES_BUCKET, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP
+from .core.severity import frame_area_pct_to_severity
+from .utils.camera_calibration import load_calibration
+from .utils.gps_processor import GPSProcessor
+from .utils.ipm_transformer import IPMTransformer
 
 _CALIBRATION = load_calibration()
 
