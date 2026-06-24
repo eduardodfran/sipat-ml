@@ -1,0 +1,1 @@
+ALTER TABLE raw_detections ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION;

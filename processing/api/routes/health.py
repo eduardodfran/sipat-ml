@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from ...middleware import request_id_var
 from ...rate_limiter import HEALTH_LIMIT, limiter
 from ...services.supabase_client import get_supabase_service
 
@@ -20,6 +21,7 @@ class HealthResponse(BaseModel):
     timestamp: str
     uptime_seconds: float
     version: str
+    request_id: str
 
 
 class DetailedHealthResponse(HealthResponse):
@@ -35,6 +37,7 @@ async def health_check(request: Request):
         timestamp=datetime.now(timezone.utc).isoformat(),
         uptime_seconds=round(uptime, 2),
         version="1.0.0",
+        request_id=request_id_var.get(),
     )
 
 
@@ -60,4 +63,5 @@ async def detailed_health_check(request: Request):
         uptime_seconds=round(uptime, 2),
         version="1.0.0",
         supabase=supabase_status,
+        request_id=request_id_var.get(),
     )

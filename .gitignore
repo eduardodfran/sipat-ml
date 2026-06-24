@@ -59,4 +59,5 @@ weights/*.engine
 # Notebook checkpoints
 .ipynb_checkpoints/
 
-*.sql
+# Migrations are version-controlled (see migrations/ directory)
+# Do NOT add *.sql here - migration SQL files must be committed

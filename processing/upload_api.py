@@ -1,3 +1,4 @@
+import logging
 import re
 import uuid
 
@@ -8,6 +9,8 @@ from starlette.requests import Request
 from .rate_limiter import UPLOAD_LIMIT, limiter
 from .services.blob_storage import BlobStorageService, get_blob_storage_service
 from .services.supabase_client import get_supabase_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -36,6 +39,8 @@ class CompleteUploadRequest(BaseModel):
     ride_id: str
     video_path: str
     gps_path: str
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class AbortUploadRequest(BaseModel):
@@ -105,6 +110,12 @@ async def complete_upload(
 
     for label, path in [("video", body.video_path), ("GPS", body.gps_path)]:
         blob.validate_blob_content(path, label)
+
+    if body.latitude is not None and body.longitude is not None:
+        if not (-90 <= body.latitude <= 90):
+            raise HTTPException(status_code=400, detail="Invalid latitude: must be between -90 and 90")
+        if not (-180 <= body.longitude <= 180):
+            raise HTTPException(status_code=400, detail="Invalid longitude: must be between -180 and 180")
 
     supabase.insert(
         "rides_metadata",

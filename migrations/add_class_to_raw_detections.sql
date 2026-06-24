@@ -1,0 +1,3 @@
+ALTER TABLE raw_detections
+  ADD COLUMN IF NOT EXISTS class_id INTEGER,
+  ADD COLUMN IF NOT EXISTS class_name TEXT;

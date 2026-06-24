@@ -1,0 +1,1 @@
+ALTER TABLE raw_detections ADD COLUMN IF NOT EXISTS phys_area_m2 DOUBLE PRECISION;

@@ -212,6 +212,14 @@ class RideProcessor:
         for pothole in clustered:
             lat = float(pothole["lat"])
             lng = float(pothole["lng"])
+
+            if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+                logger.warning(
+                    "Skipping pothole with invalid coordinates: lat=%s, lng=%s (ride %s)",
+                    lat, lng, ride_id,
+                )
+                continue
+
             new_hits = int(pothole.get("detection_count") or 0)
             ipm_sev = area_to_severity(pothole.get("max_area_m2"))
             frame_sev = pothole.get("max_frame_severity", "Minor")
