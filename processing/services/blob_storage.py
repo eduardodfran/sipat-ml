@@ -4,9 +4,21 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import logging
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
+
 from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_blob_sas
 from dotenv import load_dotenv
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+_retry_strategy = retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
 
 load_dotenv()
 
@@ -31,6 +43,7 @@ class BlobStorageService:
 
     # ---- download ----
 
+    @_retry_strategy
     def download_file(self, object_path: str, container: str = CONTAINER_NAME) -> bytes:
         blob_client = self.client.get_blob_client(container=container, blob=object_path)
         download_stream = blob_client.download_blob(timeout=120)
@@ -38,6 +51,7 @@ class BlobStorageService:
 
     # ---- upload ----
 
+    @_retry_strategy
     def upload_bytes(
         self,
         object_path: str,
@@ -86,6 +100,7 @@ class BlobStorageService:
 
     # ---- SAS URL generation ----
 
+    @_retry_strategy
     def generate_sas_url(
         self,
         blob_path: str,

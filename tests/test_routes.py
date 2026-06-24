@@ -67,9 +67,12 @@ class TestRidesEndpoints:
     def test_list_rides_with_valid_token(self, client):
         mock_svc = MagicMock()
         mock_svc.validate_token.return_value = {"user_id": "user-123"}
-        mock_svc.select.return_value = [
+        execute_result = MagicMock()
+        execute_result.data = [
             {"id": "ride-1", "user_id": "user-123", "status": "completed"}
         ]
+        execute_result.count = 1
+        mock_svc.table.return_value.select.return_value.eq.return_value.range.return_value.execute.return_value = execute_result
         with patch("processing.api.routes.rides.get_supabase_service", return_value=mock_svc):
             response = client.get(
                 "/rides",
@@ -79,6 +82,7 @@ class TestRidesEndpoints:
         data = response.json()
         assert "rides" in data
         assert len(data["rides"]) == 1
+        assert data["pagination"] == {"limit": 20, "offset": 0, "total": 1}
 
     def test_get_ride_requires_auth(self, client):
         response = client.get("/rides/ride-123")

@@ -1,8 +1,7 @@
 import logging
-import threading
 import traceback
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel
 from starlette.requests import Request
 
@@ -50,7 +49,10 @@ def _run_process(ride_id: str) -> None:
 @router.post("/process/{ride_id}", response_model=ProcessResponse)
 @limiter.limit(PROCESS_LIMIT)
 async def process_ride(
-    request: Request, ride_id: str, authorization: str = Header(None)
+    request: Request,
+    background_tasks: BackgroundTasks,
+    ride_id: str,
+    authorization: str = Header(None),
 ):
     svc = get_supabase_service()
     auth = svc.validate_token(authorization)
@@ -72,8 +74,7 @@ async def process_ride(
 
     svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
 
-    thread = threading.Thread(target=_run_process, args=(ride_id,), daemon=True)
-    thread.start()
+    background_tasks.add_task(_run_process, ride_id)
 
     return ProcessResponse(
         status="accepted",

@@ -6,9 +6,21 @@ import os
 from typing import Any
 from urllib.parse import urlparse
 
+import logging
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
+
 from dotenv import load_dotenv
 from fastapi import HTTPException
 from supabase import Client, create_client
+
+logger = logging.getLogger(__name__)
+
+_retry_strategy = retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
 
 load_dotenv()
 
@@ -116,35 +128,42 @@ class SupabaseService:
         """Return a table query builder."""
         return self.client.table(name)
 
+    @_retry_strategy
     def insert(self, table: str, data: dict | list[dict]) -> Any:
         return self.client.table(table).insert(data).execute()
 
+    @_retry_strategy
     def update(self, table: str, data: dict, **filters) -> Any:
         query = self.client.table(table).update(data)
         for key, value in filters.items():
             query = query.eq(key, value)
         return query.execute()
 
+    @_retry_strategy
     def delete(self, table: str, **filters) -> Any:
         query = self.client.table(table).delete()
         for key, value in filters.items():
             query = query.eq(key, value)
         return query.execute()
 
+    @_retry_strategy
     def select(self, table: str, columns: str = "*", **filters) -> list[dict]:
         query = self.client.table(table).select(columns)
         for key, value in filters.items():
             query = query.eq(key, value)
         return (query.execute().data) or []
 
+    @_retry_strategy
     def upsert(self, table: str, data: dict | list[dict]) -> Any:
         return self.client.table(table).upsert(data).execute()
 
     # ---- storage helpers ----
 
+    @_retry_strategy
     def storage_download(self, bucket: str, path: str) -> bytes:
         return self.client.storage.from_(bucket).download(path)
 
+    @_retry_strategy
     def storage_upload(
         self,
         bucket: str,

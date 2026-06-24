@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from starlette.requests import Request
 
 from ...rate_limiter import DELETE_LIMIT, READ_LIMIT, limiter
@@ -9,16 +9,31 @@ router = APIRouter(tags=["rides"])
 
 @router.get("/rides")
 @limiter.limit(READ_LIMIT)
-async def list_rides(request: Request, authorization: str = Header(None)):
+async def list_rides(
+    request: Request,
+    authorization: str = Header(None),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
     svc = get_supabase_service()
     auth = svc.validate_token(authorization)
     user_id = auth.get("user_id") or auth.get("sub")
-    rows = svc.select(
-        "rides_metadata",
-        "id,user_id,video_bucket_path,gps_bucket_path,status,error_log,created_at",
-        user_id=user_id,
-    )
-    return {"rides": rows}
+
+    columns = "id,user_id,video_bucket_path,gps_bucket_path,status,error_log,created_at"
+    query = svc.table("rides_metadata").select(columns, count="exact").eq("user_id", user_id)
+    result = query.range(offset, offset + limit - 1).execute()
+
+    rows = result.data or []
+    total = result.count or 0
+
+    return {
+        "rides": rows,
+        "pagination": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+        },
+    }
 
 
 @router.get("/rides/{ride_id}")
