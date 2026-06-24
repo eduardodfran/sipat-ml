@@ -1,3 +1,4 @@
+import logging
 import threading
 import traceback
 
@@ -8,6 +9,7 @@ from starlette.requests import Request
 from ...rate_limiter import PROCESS_LIMIT, limiter
 from ...services.supabase_client import get_supabase_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["process"])
 
 
@@ -24,25 +26,25 @@ def _run_process(ride_id: str) -> None:
         svc = get_supabase_service()
         rows = svc.select("rides_metadata", "*", id=ride_id)
         if not rows:
-            print(f"Ride {ride_id} not found")
+            logger.warning("Ride %s not found", ride_id)
             return
         ride = rows[0]
         ride["status"] = "processing"
         try:
             processor = RideProcessor()
             result = processor.process_ride(ride)
-            print(f"Completed ride {ride_id}: {result['raw_detection_count']} detections")
+            logger.info("Completed ride %s: %d detections", ride_id, result["raw_detection_count"])
         except Exception as exc:
             error_message = str(exc)
             traceback_text = traceback.format_exc()
             try:
                 svc.update("rides_metadata", {"status": "failed", "error_log": error_message}, id=ride_id)
             except Exception as mark_exc:
-                print(f"Failed to mark ride {ride_id} as failed: {mark_exc}")
-            print(f"Background processing failed for ride {ride_id}: {exc}")
-            print(traceback_text)
+                logger.error("Failed to mark ride %s as failed: %s", ride_id, mark_exc)
+            logger.error("Background processing failed for ride %s: %s", ride_id, exc)
+            logger.debug(traceback_text)
     except Exception as e:
-        print(f"Setup error in background processing for ride {ride_id}: {e}")
+        logger.error("Setup error in background processing for ride %s: %s", ride_id, e)
 
 
 @router.post("/process/{ride_id}", response_model=ProcessResponse)

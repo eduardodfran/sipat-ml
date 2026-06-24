@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import tempfile
 import traceback
@@ -21,6 +22,8 @@ from ..services.blob_storage import BlobStorageService, get_blob_storage_service
 from ..services.supabase_client import SupabaseService, get_supabase_service
 from ..utils.geo_math import haversine_distance_meters
 from ..utils.gps_processor import GPSProcessor
+
+logger = logging.getLogger(__name__)
 
 
 class RideProcessor:
@@ -98,7 +101,7 @@ class RideProcessor:
             if repaired.exists() and repaired.stat().st_size > 0:
                 return repaired
         except Exception as e:
-            print(f"Video repair failed, using original: {e}")
+            logger.warning("Video repair failed, using original: %s", e)
         return video_path
 
     # ---- DB operations ----
@@ -199,7 +202,7 @@ class RideProcessor:
         clusterer = PotholeClusterer()
         clustered = clusterer.cluster(raw_batch)
         if not clustered:
-            print("No stable pothole clusters produced from this ride")
+            logger.info("No stable pothole clusters produced from this ride")
             return 0
 
         existing = self._fetch_verified_potholes()
@@ -215,7 +218,7 @@ class RideProcessor:
             conf = pothole.get("avg_confidence", 0.0)
             final_sev = fuse_severity(ipm_sev, frame_sev, conf)
 
-            print(f"  severity: ipm={ipm_sev}, frame={frame_sev}, conf={conf:.3f} -> final={final_sev}")
+            logger.debug("severity: ipm=%s, frame=%s, conf=%.3f -> final=%s", ipm_sev, frame_sev, conf, final_sev)
 
             match = self._find_matching_pothole(existing, lat, lng)
 
@@ -259,7 +262,7 @@ class RideProcessor:
                 })
             touched += 1
 
-        print(f"Synced {touched} verified potholes for ride {ride_id}")
+        logger.info("Synced %d verified potholes for ride %s", touched, ride_id)
         return touched
 
     # ---- main process ----
@@ -306,13 +309,13 @@ class RideProcessor:
                 "source_video_object": video_path,
                 "source_gps_object": gps_path,
             }
-            print(f"Finished ride {ride_id}: {len(raw_batch)} detections")
+            logger.info("Finished ride %s: %d detections", ride_id, len(raw_batch))
             return result
 
     def process_next_queued(self) -> dict[str, Any] | None:
         ride = self.claim_oldest_queued_ride()
         if ride is None:
-            print("No queued rides found")
+            logger.info("No queued rides found")
             return None
         ride_id = str(ride.get("id") or "")
         if not ride_id:
@@ -324,7 +327,7 @@ class RideProcessor:
             try:
                 self._mark_failed(ride_id, error)
             except Exception as mark_exc:
-                print(f"Failed to mark ride {ride_id} as failed: {mark_exc}")
+                logger.error("Failed to mark ride %s as failed: %s", ride_id, mark_exc)
             raise RuntimeError(error) from exc
 
     def process_by_id(self, ride_id: str) -> dict[str, Any]:
@@ -341,5 +344,5 @@ class RideProcessor:
             try:
                 self._mark_failed(ride_id, error)
             except Exception as mark_exc:
-                print(f"Failed to mark ride {ride_id} as failed: {mark_exc}")
+                logger.error("Failed to mark ride %s as failed: %s", ride_id, mark_exc)
             raise RuntimeError(error) from exc

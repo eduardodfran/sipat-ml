@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from .utils.camera_calibration import load_calibration
 from .utils.gps_processor import GPSProcessor
 from .utils.ipm_transformer import IPMTransformer
 
+logger = logging.getLogger(__name__)
 _CALIBRATION = load_calibration()
 
 
@@ -50,9 +52,9 @@ class DetectionBatchBuilder:
         if is_stationary:
             gps_processor = GPSProcessor(gps_processor.collapse_to_median())
             median_lat, median_lng = gps_processor.median_coordinate()
-            print(
-                f"Stationary GPS track detected — collapsing all detections "
-                f"to median coordinate ({median_lat}, {median_lng})"
+            logger.info(
+                "Stationary GPS track detected — collapsing all detections "
+                "to median coordinate (%s, %s)", median_lat, median_lng
             )
 
         capture = cv2.VideoCapture(str(video_path))
@@ -101,7 +103,7 @@ class DetectionBatchBuilder:
                             encoded_frame.tobytes(), timestamp_seconds
                         )
                     except Exception as upload_err:
-                        print(f"Failed to upload annotated frame: {upload_err}")
+                        logger.warning("Failed to upload annotated frame: %s", upload_err)
                     image_url = last_image_url
 
                     current_frame_boxes: list[list[float]] = []
@@ -125,7 +127,7 @@ class DetectionBatchBuilder:
                             severity = frame_area_pct_to_severity(bbox)
                             phys_area_m2 = ipm.compute_phys_area(bbox)
                         except Exception as e:
-                            print(f"  severity/IPM error for bbox {bbox}: {e}")
+                            logger.debug("severity/IPM error for bbox %s: %s", bbox, e)
                             pass
 
                         lat, lng = self._get_detection_coords(
@@ -171,9 +173,9 @@ class DetectionBatchBuilder:
 
                     prev_frame_boxes = current_frame_boxes
 
-            print(
-                f"Processed {frame_count} frames, "
-                f"{detection_count} detections with boxes"
+            logger.info(
+                "Processed %d frames, %d detections with boxes",
+                frame_count, detection_count
             )
             return raw_detections_batch
         finally:

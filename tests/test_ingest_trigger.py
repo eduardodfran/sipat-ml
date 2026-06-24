@@ -4,6 +4,7 @@ import argparse
 import base64
 import csv
 import json
+import logging
 import os
 import traceback
 import uuid
@@ -12,10 +13,13 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
+import pytest
 from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 from storage3.utils import StorageException
 from supabase import Client, create_client
+
+logger = logging.getLogger(__name__)
 
 CURRENT_DIR = Path(__file__).resolve().parent
 ENV_PATH = CURRENT_DIR.parent / ".env"
@@ -304,12 +308,96 @@ def trigger_test_ingest() -> dict[str, str]:
             try:
                 supabase.storage.from_(BUCKET_NAME).remove(uploaded_paths)
             except Exception as cleanup_error:
-                print(f"Cleanup warning: failed to remove uploaded files: {cleanup_error}")
+                logger.warning("Cleanup warning: failed to remove uploaded files: %s", cleanup_error)
 
         traceback_text = traceback.format_exc()
         raise RuntimeError(f"Test ingest trigger failed: {exc}\n{traceback_text}") from exc
 
 
+# ---- Unit tests for helper functions ----
+
+
+class TestValidateSupabaseConfig:
+    def test_valid_config_passes(self):
+        valid_url = "https://abc123.supabase.co"
+        valid_payload = base64.urlsafe_b64encode(
+            json.dumps({"ref": "abc123", "role": "service_role"}).encode()
+        ).rstrip(b"=").decode()
+        valid_key = f"header.{valid_payload}.signature"
+        _validate_supabase_config(valid_url, valid_key)
+
+    def test_invalid_jwt_format_raises(self):
+        with pytest.raises(ValueError, match="does not look like a Supabase JWT"):
+            _validate_supabase_config("https://abc.supabase.co", "not-a-jwt")
+
+    def test_wrong_role_raises(self):
+        valid_payload = base64.urlsafe_b64encode(
+            json.dumps({"ref": "abc", "role": "authenticated"}).encode()
+        ).rstrip(b"=").decode()
+        key = f"header.{valid_payload}.signature"
+        with pytest.raises(ValueError, match="not a service_role token"):
+            _validate_supabase_config("https://abc.supabase.co", key)
+
+    def test_project_mismatch_raises(self):
+        valid_payload = base64.urlsafe_b64encode(
+            json.dumps({"ref": "different", "role": "service_role"}).encode()
+        ).rstrip(b"=").decode()
+        key = f"header.{valid_payload}.signature"
+        with pytest.raises(ValueError, match="project mismatch"):
+            _validate_supabase_config("https://abc.supabase.co", key)
+
+
+class TestReadJsonText:
+    def test_valid_json_array(self):
+        result = _read_json_text('[{"lat": 1.0, "lng": 2.0}]', "test")
+        assert result == [{"lat": 1.0, "lng": 2.0}]
+
+    def test_non_array_raises(self):
+        with pytest.raises(ValueError, match="must contain a JSON array"):
+            _read_json_text('{"lat": 1.0}', "test")
+
+
+class TestReadCsvText:
+    def test_valid_csv(self):
+        csv_text = "timestamp_seconds,lat,lng\n0,1.0,2.0\n1,1.1,2.1"
+        result = _read_csv_text(csv_text, "test")
+        assert len(result) == 2
+        assert result[0]["lat"] == 1.0
+
+    def test_missing_column_raises(self):
+        csv_text = "lat,lng\n1.0,2.0"
+        with pytest.raises(ValueError, match="must contain timestamp_seconds"):
+            _read_csv_text(csv_text, "test")
+
+
+class TestNormalizeRemotePath:
+    def test_strips_leading_slash(self):
+        assert _normalize_remote_path("/path/to/file", "test") == "path/to/file"
+
+    def test_strips_bucket_prefix(self):
+        assert _normalize_remote_path(f"{BUCKET_NAME}/path/to/file", "test") == "path/to/file"
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="Missing"):
+            _normalize_remote_path("", "test")
+
+
+class TestReadJsonFile:
+    def test_valid_file(self, tmp_path):
+        json_file = tmp_path / "test.json"
+        json_file.write_text('[{"lat": 1.0}]')
+        result = _read_json_file(json_file)
+        assert result == [{"lat": 1.0}]
+
+
+class TestReadCsvFile:
+    def test_valid_file(self, tmp_path):
+        csv_file = tmp_path / "test.csv"
+        csv_file.write_text("timestamp_seconds,lat,lng\n0,1.0,2.0")
+        result = _read_csv_file(csv_file)
+        assert result == [{"timestamp_seconds": 0.0, "lat": 1.0, "lng": 2.0}]
+
+
 if __name__ == "__main__":
     result = trigger_test_ingest()
-    print(json.dumps(result, indent=2))
+    logger.info(json.dumps(result, indent=2))

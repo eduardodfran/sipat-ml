@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -7,11 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 
+from .api.routes.health import router as health_router
 from .api.routes.process import router as process_router
 from .api.routes.rides import router as rides_router
 from .rate_limiter import limiter
 from .services.supabase_client import get_supabase_service
 from .upload_api import router as upload_router
+
+logger = logging.getLogger(__name__)
 
 
 def _recover_stale_processing_rides() -> None:
@@ -21,7 +25,7 @@ def _recover_stale_processing_rides() -> None:
         if not rows:
             return
         ids = [row["id"] for row in rows if row.get("id")]
-        print(f"Recovering {len(ids)} stale processing ride(s): {ids}")
+        logger.warning("Recovering %d stale processing ride(s): %s", len(ids), ids)
         for ride_id in ids:
             svc.update(
                 "rides_metadata",
@@ -29,7 +33,7 @@ def _recover_stale_processing_rides() -> None:
                 id=ride_id,
             )
     except Exception as e:
-        print(f"Failed to recover stale processing rides: {e}")
+        logger.error("Failed to recover stale processing rides: %s", e)
 
 
 @asynccontextmanager
@@ -62,6 +66,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.include_router(upload_router)
 app.include_router(rides_router)
 app.include_router(process_router)
+app.include_router(health_router)
 
 
 if __name__ == "__main__":

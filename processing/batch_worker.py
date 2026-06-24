@@ -5,8 +5,12 @@ Kept for backward compatibility with CLI usage.
 New code should import from pipeline.worker directly.
 """
 
+import logging
+import time
+
 from pipeline.worker import RideProcessor
 
+logger = logging.getLogger(__name__)
 
 # ---- CLI entry points ----
 
@@ -26,11 +30,12 @@ if __name__ == "__main__":
         try:
             result = process_next_queued_ride()
             if result is None:
-                print("No queued rides found. Sleeping for 10 minutes...")
+                logger.info("No queued rides found. Sleeping for 10 minutes...")
             else:
-                print(
-                    f"Finished ride {result['ride_id']} with {result['raw_detection_count']} "
-                    f"raw detections. Sleeping for 10 minutes..."
+                logger.info(
+                    "Finished ride %s with %d raw detections. Sleeping for 10 minutes...",
+                    result["ride_id"], result["raw_detection_count"]
                 )
         except Exception as exc:
-            print(f"Batch worker cycle failed: {exc}")
+            logger.error("Batch worker cycle failed: %s", exc)
+        time.sleep(600)

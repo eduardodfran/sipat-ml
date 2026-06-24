@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from core.clusterer import PotholeClusterer, _avg_confidence, _max_phys_area
-from core.severity import calculate_severity
-from utils.geo_math import (
+from processing.core.clusterer import PotholeClusterer, _avg_confidence, _max_phys_area
+from processing.core.severity import calculate_severity
+from processing.utils.geo_math import (
     bearing_degrees,
     haversine_distance_meters,
     is_stationary_gps_track,
