@@ -18,7 +18,7 @@ class ProcessResponse(BaseModel):
     message: str
 
 
-def _run_process(ride_id: str) -> None:
+async def _run_process_async(ride_id: str) -> None:
     from ...pipeline.worker import RideProcessor
 
     try:
@@ -31,7 +31,7 @@ def _run_process(ride_id: str) -> None:
         ride["status"] = "processing"
         try:
             processor = RideProcessor()
-            result = processor.process_ride(ride)
+            result = await processor.process_ride_async(ride)
             logger.info("Completed ride %s: %d detections", ride_id, result["raw_detection_count"])
         except Exception as exc:
             error_message = str(exc)
@@ -74,7 +74,7 @@ async def process_ride(
 
     svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
 
-    background_tasks.add_task(_run_process, ride_id)
+    background_tasks.add_task(_run_process_async, ride_id)
 
     return ProcessResponse(
         status="accepted",

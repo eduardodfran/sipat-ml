@@ -25,6 +25,8 @@ CREATE POLICY "Authenticated users can insert comments"
     WITH CHECK (auth.uid() = user_id);
 
 -- RPC: get comments for a pothole
+DROP FUNCTION IF EXISTS get_pothole_comments(INTEGER);
+
 CREATE OR REPLACE FUNCTION get_pothole_comments(p_pothole_id INTEGER)
 RETURNS TABLE (
     id UUID,
@@ -47,6 +49,8 @@ END;
 $$;
 
 -- RPC: create a comment (user_id derived from auth)
+DROP FUNCTION IF EXISTS create_pothole_comment(INTEGER, TEXT);
+
 CREATE OR REPLACE FUNCTION create_pothole_comment(p_pothole_id INTEGER, p_body TEXT)
 RETURNS TABLE (
     id UUID,

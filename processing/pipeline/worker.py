@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import subprocess
 import tempfile
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,7 @@ from storage3.utils import StorageException
 from ultralytics import YOLO
 
 from ..config.settings import (
+    MAX_WORKERS,
     MODEL_PATH,
     MERGE_RADIUS_METERS,
     RAW_DATA_BUCKET,
@@ -24,6 +27,8 @@ from ..utils.geo_math import haversine_distance_meters
 from ..utils.gps_processor import GPSProcessor
 
 logger = logging.getLogger(__name__)
+
+_thread_pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
 class RideProcessor:
@@ -274,6 +279,11 @@ class RideProcessor:
         return touched
 
     # ---- main process ----
+
+    async def process_ride_async(self, ride: dict[str, Any]) -> dict[str, Any]:
+        """Run process_ride in a thread pool to avoid blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_thread_pool, self.process_ride, ride)
 
     def process_ride(self, ride: dict[str, Any]) -> dict[str, Any]:
         ride_id = str(ride.get("id") or "")

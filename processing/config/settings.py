@@ -37,6 +37,9 @@ DEFAULT_PIXELS_PER_METER = 100.0
 ANNOTATED_FRAMES_BUCKET = "detected-images"
 RAW_DATA_BUCKET = "raw-road-data"
 
+# ---- concurrency ----
+MAX_WORKERS = int(os.getenv("SIPAT_ML_MAX_WORKERS", "2"))
+
 # ---- geo constants ----
 EARTH_RADIUS_METERS = 6371008.8
 STATIONARY_THRESHOLD_METERS = 12.0
