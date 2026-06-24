@@ -1,5 +1,6 @@
 fastapi>=0.136.0
 uvicorn>=0.48.0
+gunicorn>=23.0.0
 supabase>=2.30.0
 azure-storage-blob>=12.24.0
 ultralytics>=8.4.0

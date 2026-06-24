@@ -11,6 +11,8 @@ from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_b
 from dotenv import load_dotenv
 from fastapi import HTTPException
 
+from ..circuit_breaker import CircuitBreaker
+
 logger = logging.getLogger(__name__)
 
 _retry_strategy = retry(
@@ -32,6 +34,24 @@ class BlobStorageService:
     def __init__(self, connection_string: str | None = None) -> None:
         self._conn_str = (connection_string or os.getenv("AZURE_STORAGE_CONNECTION_STRING") or "").strip()
         self._client: BlobServiceClient | None = None
+        self._circuit = CircuitBreaker(name="blob_storage", failure_threshold=5, recovery_timeout=60.0)
+
+    def _execute_with_circuit(self, operation):
+        """Execute an operation with circuit breaker protection."""
+        if not self._circuit.can_execute():
+            raise HTTPException(
+                status_code=503,
+                detail=f"Service temporarily unavailable (circuit breaker open for '{self._circuit.name}')",
+            )
+        try:
+            result = operation()
+            self._circuit.record_success()
+            return result
+        except HTTPException:
+            raise
+        except Exception:
+            self._circuit.record_failure()
+            raise
 
     @property
     def client(self) -> BlobServiceClient:
@@ -45,9 +65,11 @@ class BlobStorageService:
 
     @_retry_strategy
     def download_file(self, object_path: str, container: str = CONTAINER_NAME) -> bytes:
-        blob_client = self.client.get_blob_client(container=container, blob=object_path)
-        download_stream = blob_client.download_blob(timeout=120)
-        return download_stream.readall()
+        def _do():
+            blob_client = self.client.get_blob_client(container=container, blob=object_path)
+            download_stream = blob_client.download_blob(timeout=120)
+            return download_stream.readall()
+        return self._execute_with_circuit(_do)
 
     # ---- upload ----
 
@@ -59,12 +81,14 @@ class BlobStorageService:
         content_type: str,
         container: str = CONTAINER_NAME,
     ) -> None:
-        blob_client = self.client.get_blob_client(container=container, blob=object_path)
-        blob_client.upload_blob(
-            data,
-            overwrite=True,
-            content_settings={"content_type": content_type},
-        )
+        def _do():
+            blob_client = self.client.get_blob_client(container=container, blob=object_path)
+            blob_client.upload_blob(
+                data,
+                overwrite=True,
+                content_settings={"content_type": content_type},
+            )
+        self._execute_with_circuit(_do)
 
     def upload_with_signed_url(
         self,
@@ -76,17 +100,19 @@ class BlobStorageService:
         """Upload using a signed URL (for Supabase storage compatibility)."""
         from types import SimpleNamespace
 
-        bucket = self.client.get_container_client(container)
-        signed_upload = bucket.create_signed_upload_url(
-            object_path,
-            SimpleNamespace(upsert=True),
-        )
-        bucket.upload_to_signed_url(
-            object_path,
-            signed_upload["token"],
-            data,
-            {"content-type": content_type, "x-upsert": "true"},
-        )
+        def _do():
+            bucket = self.client.get_container_client(container)
+            signed_upload = bucket.create_signed_upload_url(
+                object_path,
+                SimpleNamespace(upsert=True),
+            )
+            bucket.upload_to_signed_url(
+                object_path,
+                signed_upload["token"],
+                data,
+                {"content-type": content_type, "x-upsert": "true"},
+            )
+        self._execute_with_circuit(_do)
 
     # ---- delete ----
 
@@ -94,7 +120,9 @@ class BlobStorageService:
         container_client = self.client.get_container_client(container)
         for path in paths:
             try:
-                container_client.delete_blob(path, timeout=10)
+                self._execute_with_circuit(
+                    lambda p=path: container_client.delete_blob(p, timeout=10)
+                )
             except Exception:
                 pass
 
@@ -107,21 +135,23 @@ class BlobStorageService:
         content_type: str,
         container: str = CONTAINER_NAME,
     ) -> tuple[str, datetime]:
-        blob_client = self.client.get_blob_client(container=container, blob=blob_path)
-        expiry_time = datetime.now(timezone.utc) + timedelta(minutes=SAS_EXPIRY_MINUTES)
+        def _do():
+            blob_client = self.client.get_blob_client(container=container, blob=blob_path)
+            expiry_time = datetime.now(timezone.utc) + timedelta(minutes=SAS_EXPIRY_MINUTES)
 
-        sas_token = generate_blob_sas(
-            account_name=blob_client.account_name,
-            container_name=container,
-            blob_name=blob_path,
-            account_key=blob_client.credential.account_key,
-            permission=BlobSasPermissions(write=True, create=True),
-            expiry=expiry_time,
-            content_type=content_type,
-        )
+            sas_token = generate_blob_sas(
+                account_name=blob_client.account_name,
+                container_name=container,
+                blob_name=blob_path,
+                account_key=blob_client.credential.account_key,
+                permission=BlobSasPermissions(write=True, create=True),
+                expiry=expiry_time,
+                content_type=content_type,
+            )
 
-        sas_url = f"{blob_client.url}?{sas_token}"
-        return sas_url, expiry_time
+            sas_url = f"{blob_client.url}?{sas_token}"
+            return sas_url, expiry_time
+        return self._execute_with_circuit(_do)
 
     # ---- validation ----
 
@@ -138,45 +168,51 @@ class BlobStorageService:
         container: str = CONTAINER_NAME,
     ) -> None:
         """Validate a blob exists, has correct content type, and valid data."""
-        blob_client = self.client.get_blob_client(container=container, blob=object_path)
-        props = blob_client.get_blob_properties()
+        def _do():
+            blob_client = self.client.get_blob_client(container=container, blob=object_path)
+            props = blob_client.get_blob_properties()
 
-        if props.size == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{label} blob is empty (0 bytes). Upload may have failed.",
-            )
-
-        expected_type = self.EXPECTED_CONTENT_TYPES[label]
-        stored_type = (props.content_settings.content_type if props.content_settings else None)
-        if not stored_type:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{label} blob has no content type set",
-            )
-        if stored_type != expected_type:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{label} blob has incorrect content type '{stored_type}', expected '{expected_type}'",
-            )
-
-        if label == "video":
-            stream = blob_client.download_blob(offset=0, length=self._MP4_HEADER_BYTES)
-            header = stream.readall()
-            if len(header) < self._MP4_HEADER_BYTES or header[4:8] != b"ftyp":
+            if props.size == 0:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"{label} blob is not a valid MP4 (missing ftyp box)",
+                    detail=f"{label} blob is empty (0 bytes). Upload may have failed.",
                 )
-        elif label == "GPS":
-            stream = blob_client.download_blob(offset=0, length=256)
-            data = stream.readall()
-            stripped = data.lstrip()
-            if not stripped or stripped[0] not in (ord("{"), ord("[")):
+
+            expected_type = self.EXPECTED_CONTENT_TYPES[label]
+            stored_type = (props.content_settings.content_type if props.content_settings else None)
+            if not stored_type:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"{label} blob is not valid JSON",
+                    detail=f"{label} blob has no content type set",
                 )
+            if stored_type != expected_type:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} blob has incorrect content type '{stored_type}', expected '{expected_type}'",
+                )
+
+            if label == "video":
+                stream = blob_client.download_blob(offset=0, length=self._MP4_HEADER_BYTES)
+                header = stream.readall()
+                if len(header) < self._MP4_HEADER_BYTES or header[4:8] != b"ftyp":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{label} blob is not a valid MP4 (missing ftyp box)",
+                    )
+            elif label == "GPS":
+                stream = blob_client.download_blob(offset=0, length=256)
+                data = stream.readall()
+                stripped = data.lstrip()
+                if not stripped or stripped[0] not in (ord("{"), ord("[")):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{label} blob is not valid JSON",
+                    )
+        self._execute_with_circuit(_do)
+
+    def get_circuit_status(self) -> dict:
+        """Return circuit breaker status for health checks."""
+        return self._circuit.get_status()
 
 
 # ---- module-level singleton for backward compatibility ----

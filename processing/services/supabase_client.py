@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 from supabase import Client, create_client
 
+from ..circuit_breaker import CircuitBreaker
+
 logger = logging.getLogger(__name__)
 
 _retry_strategy = retry(
@@ -36,6 +38,7 @@ class SupabaseService:
         self._url = (url or os.getenv("SUPABASE_URL") or "").strip()
         self._service_key = (service_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
         self._client: Client | None = None
+        self._circuit = CircuitBreaker(name="supabase", failure_threshold=5, recovery_timeout=60.0)
         self._validate_config()
 
     # ---- properties ----
@@ -126,42 +129,81 @@ class SupabaseService:
 
     def table(self, name: str):
         """Return a table query builder."""
-        return self.client.table(name)
+        if not self._circuit.can_execute():
+            raise HTTPException(
+                status_code=503,
+                detail=f"Service temporarily unavailable (circuit breaker open for '{self._circuit.name}')",
+            )
+        try:
+            result = self.client.table(name)
+            return result
+        except Exception:
+            self._circuit.record_failure()
+            raise
+
+    def _execute_with_circuit(self, operation):
+        """Execute an operation with circuit breaker protection."""
+        if not self._circuit.can_execute():
+            raise HTTPException(
+                status_code=503,
+                detail=f"Service temporarily unavailable (circuit breaker open for '{self._circuit.name}')",
+            )
+        try:
+            result = operation()
+            self._circuit.record_success()
+            return result
+        except HTTPException:
+            raise
+        except Exception:
+            self._circuit.record_failure()
+            raise
 
     @_retry_strategy
     def insert(self, table: str, data: dict | list[dict]) -> Any:
-        return self.client.table(table).insert(data).execute()
+        return self._execute_with_circuit(
+            lambda: self.client.table(table).insert(data).execute()
+        )
 
     @_retry_strategy
     def update(self, table: str, data: dict, **filters) -> Any:
-        query = self.client.table(table).update(data)
-        for key, value in filters.items():
-            query = query.eq(key, value)
-        return query.execute()
+        def _do():
+            query = self.client.table(table).update(data)
+            for key, value in filters.items():
+                query = query.eq(key, value)
+            return query.execute()
+        return self._execute_with_circuit(_do)
 
     @_retry_strategy
     def delete(self, table: str, **filters) -> Any:
-        query = self.client.table(table).delete()
-        for key, value in filters.items():
-            query = query.eq(key, value)
-        return query.execute()
+        def _do():
+            query = self.client.table(table).delete()
+            for key, value in filters.items():
+                query = query.eq(key, value)
+            return query.execute()
+        return self._execute_with_circuit(_do)
 
     @_retry_strategy
     def select(self, table: str, columns: str = "*", **filters) -> list[dict]:
-        query = self.client.table(table).select(columns)
-        for key, value in filters.items():
-            query = query.eq(key, value)
-        return (query.execute().data) or []
+        def _do():
+            query = self.client.table(table).select(columns)
+            for key, value in filters.items():
+                query = query.eq(key, value)
+            return (query.execute().data) or []
+        return self._execute_with_circuit(_do)
 
     @_retry_strategy
     def upsert(self, table: str, data: dict | list[dict]) -> Any:
-        return self.client.table(table).upsert(data).execute()
+        return self._execute_with_circuit(
+            lambda: self.client.table(table).upsert(data).execute()
+        )
 
     # ---- storage helpers ----
 
     @_retry_strategy
     def storage_download(self, bucket: str, path: str) -> bytes:
-        return self.client.storage.from_(bucket).download(path)
+        return self._execute_with_circuit(
+            lambda: self.client.storage.from_(bucket).download(path)
+        )
 
     @_retry_strategy
     def storage_upload(
@@ -172,15 +214,21 @@ class SupabaseService:
         content_type: str,
         upsert: bool = True,
     ) -> Any:
-        opts = {"content-type": content_type}
-        if upsert:
-            opts["upsert"] = "true"
-        return self.client.storage.from_(bucket).upload(
-            path=path, file=file_bytes, file_options=opts
-        )
+        def _do():
+            opts = {"content-type": content_type}
+            if upsert:
+                opts["upsert"] = "true"
+            return self.client.storage.from_(bucket).upload(
+                path=path, file=file_bytes, file_options=opts
+            )
+        return self._execute_with_circuit(_do)
 
     def storage_get_public_url(self, bucket: str, path: str) -> str:
         return f"{self._url}/storage/v1/object/public/{bucket}/{path}"
+
+    def get_circuit_status(self) -> dict:
+        """Return circuit breaker status for health checks."""
+        return self._circuit.get_status()
 
 
 # ---- module-level singleton for backward compatibility ----

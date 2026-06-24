@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from .api.routes.health import router as health_router
 from .api.routes.process import router as process_router
 from .api.routes.rides import router as rides_router
+from .background_tasks import signal_shutdown, wait_for_tasks
 from .middleware import RequestIDMiddleware, request_id_var
 from .rate_limiter import limiter
 from .services.supabase_client import get_supabase_service
@@ -60,7 +62,11 @@ def _recover_stale_processing_rides() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _recover_stale_processing_rides()
+    logger.info("Server started, accepting requests")
     yield
+    # Graceful shutdown
+    signal_shutdown()
+    await wait_for_tasks()
 
 
 app = FastAPI(title="SIPAT Process API", lifespan=lifespan)

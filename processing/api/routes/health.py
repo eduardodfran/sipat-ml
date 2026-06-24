@@ -8,6 +8,7 @@ from starlette.requests import Request
 
 from ...middleware import request_id_var
 from ...rate_limiter import HEALTH_LIMIT, limiter
+from ...services.blob_storage import get_blob_storage_service
 from ...services.supabase_client import get_supabase_service
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,17 @@ class HealthResponse(BaseModel):
     uptime_seconds: float
     version: str
     request_id: str
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    timestamp: str
+    checks: dict[str, str]
+
+
+class CircuitBreakerResponse(BaseModel):
+    timestamp: str
+    circuits: dict[str, dict]
 
 
 class DetailedHealthResponse(HealthResponse):
@@ -64,4 +76,56 @@ async def detailed_health_check(request: Request):
         version="1.0.0",
         supabase=supabase_status,
         request_id=request_id_var.get(),
+    )
+
+
+@router.get("/health/ready", response_model=ReadinessResponse)
+@limiter.limit(HEALTH_LIMIT)
+async def readiness_check(request: Request):
+    checks: dict[str, str] = {}
+
+    try:
+        svc = get_supabase_service()
+        svc.select("rides_metadata", "id", limit=1)
+        checks["supabase"] = "ok"
+    except Exception as e:
+        checks["supabase"] = f"error: {type(e).__name__}"
+        logger.warning("Readiness check – Supabase failed: %s", e)
+
+    try:
+        blob_svc = get_blob_storage_service()
+        blob_svc.client.get_service_properties()
+        checks["azure_blob"] = "ok"
+    except Exception as e:
+        checks["azure_blob"] = f"error: {type(e).__name__}"
+        logger.warning("Readiness check – Azure Blob failed: %s", e)
+
+    all_ok = all(v == "ok" for v in checks.values())
+
+    return ReadinessResponse(
+        status="ready" if all_ok else "not_ready",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        checks=checks,
+    )
+
+
+@router.get("/health/circuit-breakers", response_model=CircuitBreakerResponse)
+@limiter.limit(HEALTH_LIMIT)
+async def circuit_breaker_status(request: Request):
+    """Return circuit breaker status for all external services."""
+    circuits = {}
+    try:
+        svc = get_supabase_service()
+        circuits["supabase"] = svc.get_circuit_status()
+    except Exception:
+        circuits["supabase"] = {"state": "unknown", "error": "Failed to get status"}
+    try:
+        blob_svc = get_blob_storage_service()
+        circuits["blob_storage"] = blob_svc.get_circuit_status()
+    except Exception:
+        circuits["blob_storage"] = {"state": "unknown", "error": "Failed to get status"}
+
+    return CircuitBreakerResponse(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        circuits=circuits,
     )

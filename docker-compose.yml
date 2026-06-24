@@ -7,3 +7,21 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - SIPAT_ML_WORKERS=${SIPAT_ML_WORKERS:-4}
+      - SIPAT_ML_WORKER_TIMEOUT=${SIPAT_ML_WORKER_TIMEOUT:-120}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G

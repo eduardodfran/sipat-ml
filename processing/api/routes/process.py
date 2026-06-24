@@ -1,10 +1,11 @@
 import logging
 import traceback
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from ...background_tasks import submit_background_task
 from ...rate_limiter import PROCESS_LIMIT, limiter
 from ...services.supabase_client import get_supabase_service
 
@@ -50,7 +51,6 @@ async def _run_process_async(ride_id: str) -> None:
 @limiter.limit(PROCESS_LIMIT)
 async def process_ride(
     request: Request,
-    background_tasks: BackgroundTasks,
     ride_id: str,
     authorization: str = Header(None),
 ):
@@ -74,7 +74,7 @@ async def process_ride(
 
     svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
 
-    background_tasks.add_task(_run_process_async, ride_id)
+    await submit_background_task(_run_process_async(ride_id), name=f"process_{ride_id}")
 
     return ProcessResponse(
         status="accepted",

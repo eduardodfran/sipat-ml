@@ -39,6 +39,8 @@ RAW_DATA_BUCKET = "raw-road-data"
 
 # ---- concurrency ----
 MAX_WORKERS = int(os.getenv("SIPAT_ML_MAX_WORKERS", "2"))
+WORKERS = int(os.getenv("SIPAT_ML_WORKERS", "1"))
+WORKER_TIMEOUT = int(os.getenv("SIPAT_ML_WORKER_TIMEOUT", "120"))
 
 # ---- geo constants ----
 EARTH_RADIUS_METERS = 6371008.8
