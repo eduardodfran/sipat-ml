@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -218,10 +219,13 @@ class BlobStorageService:
 # ---- module-level singleton for backward compatibility ----
 
 _default_service: BlobStorageService | None = None
+_default_service_lock = threading.Lock()
 
 
 def get_blob_storage_service() -> BlobStorageService:
     global _default_service
     if _default_service is None:
-        _default_service = BlobStorageService()
+        with _default_service_lock:
+            if _default_service is None:
+                _default_service = BlobStorageService()
     return _default_service

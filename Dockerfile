@@ -23,12 +23,12 @@ COPY weights/ ./weights/
 
 EXPOSE 8000
 
-# Production: gunicorn with uvicorn workers (multi-worker)
-CMD ["gunicorn", "processing.main:app", \
-     "-w", "4", \
-     "-k", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", \
-     "--timeout", "120"]
+# Development: single uvicorn process
+CMD ["uvicorn", "processing.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-# Development: single uvicorn process (uncomment below, comment out gunicorn CMD)
-# CMD ["uvicorn", "processing.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Production: gunicorn with uvicorn workers (uncomment below, comment out uvicorn CMD)
+# CMD ["gunicorn", "processing.main:app", \
+#      "-w", "4", \
+#      "-k", "uvicorn.workers.UvicornWorker", \
+#      "--bind", "0.0.0.0:8000", \
+#      "--timeout", "120"]

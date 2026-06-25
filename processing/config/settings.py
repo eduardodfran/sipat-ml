@@ -42,6 +42,10 @@ MAX_WORKERS = int(os.getenv("SIPAT_ML_MAX_WORKERS", "2"))
 WORKERS = int(os.getenv("SIPAT_ML_WORKERS", "1"))
 WORKER_TIMEOUT = int(os.getenv("SIPAT_ML_WORKER_TIMEOUT", "120"))
 
+# ---- connection pool ----
+SUPABASE_POOL_SIZE = int(os.getenv("SIPAT_ML_SUPABASE_POOL_SIZE", "10"))
+AZURE_MAX_CONNECTIONS = int(os.getenv("SIPAT_ML_AZURE_MAX_CONNECTIONS", "10"))
+
 # ---- geo constants ----
 EARTH_RADIUS_METERS = 6371008.8
 STATIONARY_THRESHOLD_METERS = 12.0

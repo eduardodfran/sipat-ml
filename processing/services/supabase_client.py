@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 from typing import Any
 from urllib.parse import urlparse
 
@@ -234,10 +235,13 @@ class SupabaseService:
 # ---- module-level singleton for backward compatibility ----
 
 _default_service: SupabaseService | None = None
+_default_service_lock = threading.Lock()
 
 
 def get_supabase_service() -> SupabaseService:
     global _default_service
     if _default_service is None:
-        _default_service = SupabaseService()
+        with _default_service_lock:
+            if _default_service is None:
+                _default_service = SupabaseService()
     return _default_service

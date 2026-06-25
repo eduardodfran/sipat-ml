@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.requests import Request
 
@@ -44,12 +45,15 @@ class DetailedHealthResponse(HealthResponse):
 @limiter.limit(HEALTH_LIMIT)
 async def health_check(request: Request):
     uptime = time.monotonic() - _start_time
-    return HealthResponse(
-        status="healthy",
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        uptime_seconds=round(uptime, 2),
-        version="1.0.0",
-        request_id=request_id_var.get(),
+    return JSONResponse(
+        content=HealthResponse(
+            status="healthy",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            uptime_seconds=round(uptime, 2),
+            version="1.0.0",
+            request_id=request_id_var.get(),
+        ).model_dump(),
+        headers={"Cache-Control": "public, max-age=10"},
     )
 
 
@@ -102,10 +106,13 @@ async def readiness_check(request: Request):
 
     all_ok = all(v == "ok" for v in checks.values())
 
-    return ReadinessResponse(
-        status="ready" if all_ok else "not_ready",
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        checks=checks,
+    return JSONResponse(
+        content=ReadinessResponse(
+            status="ready" if all_ok else "not_ready",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            checks=checks,
+        ).model_dump(),
+        headers={"Cache-Control": "public, max-age=10"},
     )
 
 
@@ -125,7 +132,10 @@ async def circuit_breaker_status(request: Request):
     except Exception:
         circuits["blob_storage"] = {"state": "unknown", "error": "Failed to get status"}
 
-    return CircuitBreakerResponse(
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        circuits=circuits,
+    return JSONResponse(
+        content=CircuitBreakerResponse(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            circuits=circuits,
+        ).model_dump(),
+        headers={"Cache-Control": "public, max-age=10"},
     )

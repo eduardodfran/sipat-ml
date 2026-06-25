@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from ...rate_limiter import DELETE_LIMIT, READ_LIMIT, limiter
@@ -26,14 +27,17 @@ async def list_rides(
     rows = result.data or []
     total = result.count or 0
 
-    return {
-        "rides": rows,
-        "pagination": {
-            "limit": limit,
-            "offset": offset,
-            "total": total,
+    return JSONResponse(
+        content={
+            "rides": rows,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "total": total,
+            },
         },
-    }
+        headers={"Cache-Control": "private, max-age=5"},
+    )
 
 
 @router.get("/rides/{ride_id}")
