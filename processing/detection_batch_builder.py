@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import numpy as np
 from supabase import Client
 from ultralytics import YOLO
 
@@ -16,6 +17,16 @@ from .utils.ipm_transformer import IPMTransformer
 
 logger = logging.getLogger(__name__)
 _CALIBRATION = load_calibration()
+
+_clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+
+def _apply_clahe(frame: np.ndarray) -> np.ndarray:
+    """Enhance contrast via CLAHE on the L channel of LAB color space."""
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = _clahe.apply(l)
+    return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
 
 
 def _iou(box_a: list[float], box_b: list[float]) -> float:
@@ -106,6 +117,7 @@ class DetectionBatchBuilder:
                         )
                     ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=cal)
 
+                frame = _apply_clahe(frame)
                 results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
                 for result in results:
