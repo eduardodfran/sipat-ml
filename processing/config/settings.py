@@ -21,7 +21,7 @@ CROP_TOP_RATIO = 0.4
 EXCLUDED_CLASSES: set[str] = {"D43", "D44"}
 
 # ---- clustering & merge radius ----
-MERGE_RADIUS_METERS = 15.0
+MERGE_RADIUS_METERS = 10.0
 CLUSTER_MIN_DETECTIONS = 3
 
 # ---- DPWH-aligned severity thresholds (FHWA LTPP / PAVER derived) ----
