@@ -9,6 +9,11 @@ YOLO_CONFIDENCE = 0.25
 _IOU_THRESHOLD = 0.7
 FRAME_SKIP = 5
 
+# ---- class filtering ----
+# Road marking classes (D43 = crosswalk blur, D44 = white line blur) are not
+# pavement distress and produce false positives on normal road features.
+EXCLUDED_CLASSES: set[str] = {"D43", "D44"}
+
 # ---- clustering & merge radius ----
 MERGE_RADIUS_METERS = 15.0
 CLUSTER_MIN_DETECTIONS = 3

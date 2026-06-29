@@ -8,7 +8,7 @@ import cv2
 from supabase import Client
 from ultralytics import YOLO
 
-from .config.settings import ANNOTATED_FRAMES_BUCKET, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP
+from .config.settings import ANNOTATED_FRAMES_BUCKET, EXCLUDED_CLASSES, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP
 from .core.severity import frame_area_pct_to_severity
 from .utils.camera_calibration import load_calibration
 from .utils.gps_processor import GPSProcessor
@@ -150,6 +150,9 @@ class DetectionBatchBuilder:
                         except Exception:
                             class_id = -1
                             class_name = "unknown"
+
+                        if class_name in EXCLUDED_CLASSES:
+                            continue
 
                         raw_detections_batch.append(
                             {
