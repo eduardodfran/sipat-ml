@@ -10,7 +10,7 @@ from ultralytics import YOLO
 
 from .config.settings import ANNOTATED_FRAMES_BUCKET, EXCLUDED_CLASSES, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP, CROP_TOP_RATIO
 from .core.severity import frame_area_pct_to_severity
-from .utils.camera_calibration import load_calibration
+from .utils.camera_calibration import CameraCalibration, load_calibration
 from .utils.gps_processor import GPSProcessor
 from .utils.ipm_transformer import IPMTransformer
 
@@ -87,12 +87,24 @@ class DetectionBatchBuilder:
                 timestamp_seconds = current_frame_index / fps
 
                 h, w = frame.shape[:2]
+                crop_y = 0
                 if h > w and CROP_TOP_RATIO > 0:
                     crop_y = int(h * CROP_TOP_RATIO)
                     frame = frame[crop_y:]
 
                 if ipm is None:
-                    ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=_CALIBRATION)
+                    cal = _CALIBRATION
+                    if h > w:
+                        cal = CameraCalibration(
+                            fx=cal.fx, fy=cal.fy,
+                            cx=cal.cy,
+                            cy=cal.cx - crop_y,
+                            height_m=cal.height_m,
+                            pitch_deg=cal.pitch_deg,
+                            roll_deg=cal.roll_deg,
+                            yaw_deg=cal.yaw_deg,
+                        )
+                    ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=cal)
 
                 results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
