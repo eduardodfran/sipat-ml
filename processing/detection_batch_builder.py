@@ -8,7 +8,7 @@ import cv2
 from supabase import Client
 from ultralytics import YOLO
 
-from .config.settings import ANNOTATED_FRAMES_BUCKET, EXCLUDED_CLASSES, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP
+from .config.settings import ANNOTATED_FRAMES_BUCKET, EXCLUDED_CLASSES, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP, CROP_TOP_RATIO
 from .core.severity import frame_area_pct_to_severity
 from .utils.camera_calibration import load_calibration
 from .utils.gps_processor import GPSProcessor
@@ -85,8 +85,15 @@ class DetectionBatchBuilder:
 
                 current_frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
                 timestamp_seconds = current_frame_index / fps
+
+                h, w = frame.shape[:2]
+                if h > w and CROP_TOP_RATIO > 0:
+                    crop_y = int(h * CROP_TOP_RATIO)
+                    frame = frame[crop_y:]
+
                 if ipm is None:
                     ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=_CALIBRATION)
+
                 results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
                 for result in results:

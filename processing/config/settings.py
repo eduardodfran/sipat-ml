@@ -9,6 +9,12 @@ YOLO_CONFIDENCE = 0.25
 _IOU_THRESHOLD = 0.7
 FRAME_SKIP = 5
 
+# ---- frame cropping ----
+# RDD2022 was trained on forward-facing vehicle cameras where the road fills
+# most of the frame. Portrait phone video puts the road in the bottom ~50%.
+# CROP_TOP_RATIO = 0.0 means no crop; 0.4 means cut top 40% off.
+CROP_TOP_RATIO = 0.4
+
 # ---- class filtering ----
 # Road marking classes (D43 = crosswalk blur, D44 = white line blur) are not
 # pavement distress and produce false positives on normal road features.
