@@ -68,7 +68,7 @@ def _validate_blob_path(path: str) -> None:
 @router.post("/init", response_model=InitUploadResponse)
 @limiter.limit(UPLOAD_LIMIT)
 async def init_upload(
-    request: Request, upload_request: InitUploadRequest, authorization: str = Header(None)
+    request: Request, _upload_request: InitUploadRequest, authorization: str = Header(None)
 ):
     supabase = get_supabase_service()
     blob = get_blob_storage_service()

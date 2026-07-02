@@ -151,7 +151,7 @@ class RideProcessor:
         return self._svc.select("verified_potholes")
 
     @staticmethod
-    def _friendly_error(exc: Exception, action: str) -> str:
+    def _friendly_error(exc: Exception, _: str) -> str:
         if isinstance(exc, APIError) and exc.args:
             payload = exc.args[0]
             if isinstance(payload, dict):
