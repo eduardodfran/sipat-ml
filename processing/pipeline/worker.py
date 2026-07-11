@@ -22,6 +22,7 @@ from ..core.clusterer import PotholeClusterer
 from ..core.severity import area_to_severity, fuse_severity, escalate_severity
 from ..detection_batch_builder import DetectionBatchBuilder
 from ..services.blob_storage import BlobStorageService, get_blob_storage_service
+from ..services.geocoder import geocode_pothole
 from ..services.supabase_client import SupabaseService, get_supabase_service
 from ..utils.geo_math import haversine_distance_meters
 from ..utils.gps_processor import GPSProcessor
@@ -254,7 +255,7 @@ class RideProcessor:
                 match["worst_severity"] = merged_sev
                 match["user_detections"] = merged_users
             else:
-                client.schema("public").from_("verified_potholes").insert({
+                result = client.schema("public").from_("verified_potholes").insert({
                     "ride_id": ride_id,
                     "consolidated_latitude": lat,
                     "consolidated_longitude": lng,
@@ -263,8 +264,9 @@ class RideProcessor:
                     "status": "queued",
                     "user_detections": pothole.get("user_detections") or [],
                 }).execute()
+                new_id = result.data[0]["id"] if result.data else None
                 existing.append({
-                    "id": None,
+                    "id": new_id,
                     "consolidated_latitude": lat,
                     "consolidated_longitude": lng,
                     "worst_severity": final_sev,
@@ -273,6 +275,12 @@ class RideProcessor:
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "user_detections": pothole.get("user_detections") or [],
                 })
+                # Geocode address in background (best-effort, non-blocking)
+                if new_id is not None:
+                    try:
+                        geocode_pothole(client, new_id, lat, lng)
+                    except Exception as geo_exc:
+                        logger.warning("Geocoding failed for pothole %s: %s", new_id, geo_exc)
             touched += 1
 
         logger.info("Synced %d verified potholes for ride %s", touched, ride_id)
