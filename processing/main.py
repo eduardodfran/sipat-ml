@@ -61,9 +61,36 @@ def _recover_stale_processing_rides() -> None:
         logger.error("Failed to recover stale processing rides: %s", e)
 
 
+def _run_migrations() -> None:
+    import os
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    url = os.environ.get("SUPABASE_URL")
+    if not key or not url:
+        logger.warning("Supabase credentials not set, skipping migrations")
+        return
+    try:
+        import pg8000
+        import ssl
+        ref = url.split(".")[0].split("://")[1]
+        conn = pg8000.connect(
+            host=f"db.{ref}.supabase.co", port=5432,
+            database="postgres", user="postgres", password=key,
+            ssl_context=ssl.create_default_context(),
+        )
+        cur = conn.cursor()
+        cur.execute("ALTER TABLE community_photos ADD COLUMN IF NOT EXISTS caption TEXT;")
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("Migration: added caption column to community_photos")
+    except Exception as e:
+        logger.warning("Migration failed (non-fatal): %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _recover_stale_processing_rides()
+    _run_migrations()
     logger.info("Server started, accepting requests")
     yield
     # Graceful shutdown

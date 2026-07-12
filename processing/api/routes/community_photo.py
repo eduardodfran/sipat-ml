@@ -6,7 +6,7 @@ import tempfile
 import time
 import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from ...config.settings import MODEL_PATH, YOLO_CONFIDENCE
@@ -63,15 +63,19 @@ async def upload_community_photo(
     image: UploadFile = File(...),
     latitude: float = Form(...),
     longitude: float = Form(...),
+    caption: str = Form(default=None),
+    authorization: str = Header(None),
 ):
+    svc = get_supabase_service()
+    auth = svc.validate_token(authorization)
+    user_id = auth.get("user_id") or auth.get("sub")
+
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(400, "File must be an image")
 
     image_bytes = await image.read()
     if len(image_bytes) > 10 * 1024 * 1024:
         raise HTTPException(400, "Image too large (max 10MB)")
-
-    svc = get_supabase_service()
     filename = f"community/{uuid.uuid4().hex}.jpg"
 
     try:
@@ -90,10 +94,11 @@ async def upload_community_photo(
     addr = await run_in_threadpool(reverse_geocode, latitude, longitude)
 
     photo_data = {
-        "user_id": "00000000-0000-0000-0000-000000000000",
+        "user_id": user_id,
         "image_url": image_url,
         "latitude": latitude,
         "longitude": longitude,
+        "caption": caption if caption else None,
         "street": addr.get("street") if addr else None,
         "barangay": addr.get("barangay") if addr else None,
         "city": addr.get("city") if addr else None,
@@ -109,8 +114,19 @@ async def upload_community_photo(
         result = svc.insert("community_photos", photo_data)
         photo_id = result.data[0]["id"]
     except Exception as exc:
-        logger.error("DB insert failed: %s", exc)
-        raise HTTPException(500, "Failed to save photo record")
+        err_str = str(exc)
+        if "PGRST204" in err_str and "caption" in err_str:
+            logger.warning("caption column missing, retrying without it")
+            photo_data.pop("caption", None)
+            try:
+                result = svc.insert("community_photos", photo_data)
+                photo_id = result.data[0]["id"]
+            except Exception as exc2:
+                logger.error("DB insert failed (no caption): %s", exc2)
+                raise HTTPException(500, "Failed to save photo record")
+        else:
+            logger.error("DB insert failed: %s", exc)
+            raise HTTPException(500, "Failed to save photo record")
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         tmp.write(image_bytes)

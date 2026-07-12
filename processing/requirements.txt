@@ -15,3 +15,4 @@ python-dotenv>=1.0.0
 pydantic>=2.0.0
 slowapi>=0.1.9
 tenacity>=8.0.0
+pg8000>=1.31.0
