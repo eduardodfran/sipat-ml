@@ -43,7 +43,7 @@ def _extract_address_parts(addr: dict[str, Any]) -> dict[str, str | None]:
 
     return {
         "street": get("road") or get("footway") or get("path"),
-        "barangay": get("suburb") or get("neighbourhood") or get("quarter"),
+        "barangay": get("quarter") or get("neighbourhood") or get("suburb"),
         "city": get("city") or get("town") or get("municipality") or get("village"),
         "province": get("state"),
         "region": get("region"),
