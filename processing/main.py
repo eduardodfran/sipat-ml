@@ -10,6 +10,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 
+from .api.routes.community_photo import router as community_photo_router
 from .api.routes.health import router as health_router
 from .api.routes.process import router as process_router
 from .api.routes.rides import router as rides_router
@@ -102,6 +103,7 @@ app.include_router(upload_router)
 app.include_router(rides_router)
 app.include_router(process_router)
 app.include_router(health_router)
+app.include_router(community_photo_router)
 
 
 if __name__ == "__main__":

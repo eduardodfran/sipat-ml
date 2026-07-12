@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import logging
+import os
+import tempfile
+import time
+import uuid
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+
+from ...config.settings import MODEL_PATH, YOLO_CONFIDENCE
+from ...services.geocoder import reverse_geocode
+from ...services.supabase_client import get_supabase_service
+
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["community-photo"])
+
+
+def _run_yolo_on_image(image_path: str) -> dict:
+    try:
+        from ultralytics import YOLO
+
+        if not MODEL_PATH.exists():
+            logger.warning("YOLO model not found at %s", MODEL_PATH)
+            return {}
+
+        model = YOLO(str(MODEL_PATH))
+        results = model(image_path, conf=YOLO_CONFIDENCE, verbose=False)
+
+        if not results or len(results) == 0:
+            return {}
+
+        r = results[0]
+        if r.boxes is None or len(r.boxes) == 0:
+            return {}
+
+        best_idx = r.boxes.conf.argmax()
+        conf = float(r.boxes.conf[best_idx])
+        cls_id = int(r.boxes.cls[best_idx])
+        class_name = r.names.get(cls_id, f"class_{cls_id}")
+
+        return {
+            "confidence": conf,
+            "class_name": class_name,
+            "class_id": cls_id,
+        }
+    except Exception as exc:
+        logger.warning("YOLO inference failed: %s", exc)
+        return {}
+
+
+def _classify_severity(confidence: float) -> str:
+    if confidence >= 0.7:
+        return "Severe"
+    elif confidence >= 0.4:
+        return "Moderate"
+    return "Minor"
+
+
+@router.post("/community-photo/upload")
+async def upload_community_photo(
+    image: UploadFile = File(...),
+    latitude: float = Form(...),
+    longitude: float = Form(...),
+):
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(400, "File must be an image")
+
+    image_bytes = await image.read()
+    if len(image_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(400, "Image too large (max 10MB)")
+
+    svc = get_supabase_service()
+    filename = f"community/{uuid.uuid4().hex}.jpg"
+
+    try:
+        svc.storage_upload(
+            bucket="community-photos",
+            path=filename,
+            file_bytes=image_bytes,
+            content_type="image/jpeg",
+            upsert=False,
+        )
+        image_url = svc.storage_get_public_url("community-photos", filename)
+    except Exception as exc:
+        logger.error("Storage upload failed: %s", exc)
+        raise HTTPException(500, "Failed to upload image")
+
+    addr = await run_in_threadpool(reverse_geocode, latitude, longitude)
+
+    photo_data = {
+        "user_id": "00000000-0000-0000-0000-000000000000",
+        "image_url": image_url,
+        "latitude": latitude,
+        "longitude": longitude,
+        "street": addr.get("street") if addr else None,
+        "barangay": addr.get("barangay") if addr else None,
+        "city": addr.get("city") if addr else None,
+        "province": addr.get("province") if addr else None,
+        "region": addr.get("region") if addr else None,
+        "country": addr.get("country") if addr else None,
+        "formatted_address": addr.get("formatted_address") if addr else None,
+        "address_geocoded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) if addr else None,
+        "detection_status": "pending",
+    }
+
+    try:
+        result = svc.insert("community_photos", photo_data)
+        photo_id = result.data[0]["id"]
+    except Exception as exc:
+        logger.error("DB insert failed: %s", exc)
+        raise HTTPException(500, "Failed to save photo record")
+
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(image_bytes)
+        tmp_path = tmp.name
+
+    try:
+        detection = await run_in_threadpool(_run_yolo_on_image, tmp_path)
+
+        if detection:
+            svc.update(
+                "community_photos",
+                {
+                    "detection_status": "processed",
+                    "worst_severity": _classify_severity(detection.get("confidence", 0)),
+                    "confidence": detection["confidence"],
+                    "class_name": detection["class_name"],
+                },
+                id=photo_id,
+            )
+        else:
+            svc.update(
+                "community_photos",
+                {"detection_status": "no_detection"},
+                id=photo_id,
+            )
+    finally:
+        os.unlink(tmp_path)
+
+    return {
+        "photo_id": photo_id,
+        "image_url": image_url,
+    }
