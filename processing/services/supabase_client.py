@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from supabase import Client, create_client
 
 from ..circuit_breaker import CircuitBreaker
+from ..config.settings import SUPABASE_POOL_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,11 @@ class SupabaseService:
         self,
         url: str | None = None,
         service_key: str | None = None,
+        pool_size: int | None = None,
     ) -> None:
         self._url = (url or os.getenv("SUPABASE_URL") or "").strip()
         self._service_key = (service_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+        self._pool_size = pool_size or SUPABASE_POOL_SIZE
         self._client: Client | None = None
         self._circuit = CircuitBreaker(name="supabase", failure_threshold=5, recovery_timeout=60.0)
         self._validate_config()
@@ -50,6 +53,17 @@ class SupabaseService:
             if not self._url or not self._service_key:
                 raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
             self._client = create_client(self._url, self._service_key)
+            try:
+                import httpx
+                limits = httpx.Limits(
+                    max_connections=self._pool_size,
+                    max_keepalive_connections=max(5, self._pool_size // 2),
+                )
+                transport = httpx.HTTPTransport(retries=0)
+                new_session = httpx.Client(limits=limits, transport=transport)
+                self._client.postgrest.session = new_session
+            except Exception:
+                logger.warning("Could not set Supabase connection pool size to %s", self._pool_size)
         return self._client
 
     @property

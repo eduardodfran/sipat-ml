@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 
 from ..circuit_breaker import CircuitBreaker
+from ..config.settings import AZURE_MAX_CONNECTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,9 @@ SAS_EXPIRY_MINUTES = 15
 class BlobStorageService:
     """Encapsulates Azure Blob Storage operations."""
 
-    def __init__(self, connection_string: str | None = None) -> None:
+    def __init__(self, connection_string: str | None = None, max_connections: int | None = None) -> None:
         self._conn_str = (connection_string or os.getenv("AZURE_STORAGE_CONNECTION_STRING") or "").strip()
+        self._max_connections = max_connections or AZURE_MAX_CONNECTIONS
         self._client: BlobServiceClient | None = None
         self._circuit = CircuitBreaker(name="blob_storage", failure_threshold=5, recovery_timeout=60.0)
 
@@ -59,7 +61,7 @@ class BlobStorageService:
         if self._client is None:
             if not self._conn_str:
                 raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING must be set in environment")
-            self._client = BlobServiceClient.from_connection_string(self._conn_str)
+            self._client = BlobServiceClient.from_connection_string(self._conn_str, max_connections=self._max_connections)
         return self._client
 
     # ---- download ----
