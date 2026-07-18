@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import subprocess
 import tempfile
 import traceback
@@ -148,8 +149,29 @@ class RideProcessor:
         except APIError as e:
             raise RuntimeError(self._friendly_error(e, "inserting raw_detections")) from e
 
-    def _fetch_verified_potholes(self) -> list[dict[str, Any]]:
-        return self._svc.select("verified_potholes")
+    @staticmethod
+    def _approx_degree_delta(meters: float, lat: float) -> tuple[float, float]:
+        dlat = meters / 111_320.0
+        dlng = meters / (111_320.0 * math.cos(math.radians(lat)))
+        return dlat, dlng
+
+    def _fetch_nearby_potholes(self, lat: float, lng: float) -> list[dict[str, Any]]:
+        try:
+            radius = MERGE_RADIUS_METERS * 2.0
+            dlat, dlng = self._approx_degree_delta(radius, lat)
+            result = (
+                self._svc.client.table("verified_potholes")
+                .select("*")
+                .gte("consolidated_latitude", lat - dlat)
+                .lte("consolidated_latitude", lat + dlat)
+                .gte("consolidated_longitude", lng - dlng)
+                .lte("consolidated_longitude", lng + dlng)
+                .execute()
+            )
+            return result.data or []
+        except Exception:
+            logger.warning("Bounding-box query failed, falling back to full fetch", exc_info=True)
+            return self._svc.select("verified_potholes")
 
     @staticmethod
     def _friendly_error(exc: Exception, _: str) -> str:
@@ -211,8 +233,8 @@ class RideProcessor:
             logger.info("No stable pothole clusters produced from this ride")
             return 0
 
-        existing = self._fetch_verified_potholes()
         touched = 0
+        existing: list[dict[str, Any]] = []
         client = self._svc.client
 
         for pothole in clustered:
@@ -234,7 +256,8 @@ class RideProcessor:
 
             logger.debug("severity: ipm=%s, frame=%s, conf=%.3f -> final=%s", ipm_sev, frame_sev, conf, final_sev)
 
-            match = self._find_matching_pothole(existing, lat, lng)
+            nearby = self._fetch_nearby_potholes(lat, lng)
+            match = self._find_matching_pothole(nearby + existing, lat, lng)
 
             if match:
                 match_id = match.get("id")
