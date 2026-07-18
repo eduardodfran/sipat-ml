@@ -23,12 +23,8 @@ COPY weights/ ./weights/
 
 EXPOSE 8000
 
-# Development: single uvicorn process
-CMD ["uvicorn", "processing.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Development: single uvicorn process (comment out for production)
+# CMD ["uvicorn", "processing.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-# Production: gunicorn with uvicorn workers (uncomment below, comment out uvicorn CMD)
-# CMD ["gunicorn", "processing.main:app", \
-#      "-w", "4", \
-#      "-k", "uvicorn.workers.UvicornWorker", \
-#      "--bind", "0.0.0.0:8000", \
-#      "--timeout", "120"]
+# Production: gunicorn with uvicorn workers (workers from SIPAT_ML_WORKERS env, default 4)
+CMD gunicorn processing.main:app -w ${SIPAT_ML_WORKERS:-4} -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120

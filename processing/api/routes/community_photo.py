@@ -6,10 +6,11 @@ import tempfile
 import time
 import uuid
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from ...config.settings import MODEL_PATH, YOLO_CONFIDENCE
+from ...rate_limiter import UPLOAD_LIMIT, limiter
 from ...services.geocoder import reverse_geocode
 from ...services.supabase_client import get_supabase_service
 
@@ -59,7 +60,9 @@ def _classify_severity(confidence: float) -> str:
 
 
 @router.post("/community-photo/upload")
+@limiter.limit(UPLOAD_LIMIT)
 async def upload_community_photo(
+    request: Request,
     image: UploadFile = File(...),
     latitude: float = Form(...),
     longitude: float = Form(...),
