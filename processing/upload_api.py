@@ -111,6 +111,17 @@ async def complete_upload(
     for label, path in [("video", body.video_path), ("GPS", body.gps_path)]:
         blob.validate_blob_content(path, label)
 
+    from .config.settings import MAX_VIDEO_SIZE_MB
+
+    max_bytes = MAX_VIDEO_SIZE_MB * 1024 * 1024
+    blob_size = blob.get_blob_size(body.video_path)
+    if blob_size > max_bytes:
+        blob.delete_blobs([body.video_path, body.gps_path])
+        raise HTTPException(
+            status_code=413,
+            detail=f"Video too large: {blob_size / (1024*1024):.1f}MB exceeds {MAX_VIDEO_SIZE_MB}MB limit",
+        )
+
     if body.latitude is not None and body.longitude is not None:
         if not (-90 <= body.latitude <= 90):
             raise HTTPException(status_code=400, detail="Invalid latitude: must be between -90 and 90")
