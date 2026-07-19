@@ -285,9 +285,16 @@ class DetectionBatchBuilder:
 
     def _upload_one_frame(self, ride_id: str, idx: int, path: Path) -> str:
         """Upload a single annotated frame."""
-        blob_path = f"{ride_id}/frames_annotated/frame_{idx:06d}.jpg"
-        self._blob.upload_image(path, blob_path)
-        return blob_path
+        object_path = f"annotated-frames/{ride_id}/frame_{idx:06d}.jpg"
+        self.supabase.storage.from_(ANNOTATED_FRAMES_BUCKET).upload(
+            path=object_path,
+            file=path.read_bytes(),
+            file_options={"content-type": "image/jpeg", "upsert": "true"},
+        )
+        return (
+            f"{self.supabase_url}/storage/v1/object/public/"
+            f"{ANNOTATED_FRAMES_BUCKET}/{object_path}"
+        )
 
     # ----- detection coordinate resolution -----
 
