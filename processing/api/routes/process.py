@@ -72,7 +72,9 @@ async def process_ride(
     if current_status == "completed":
         raise HTTPException(status_code=409, detail="Ride has already been processed")
 
-    svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
+    result = svc.client.table("rides_metadata").update({"status": "processing"}).eq("id", ride_id).eq("status", current_status).execute()
+    if not result.data:
+        raise HTTPException(status_code=409, detail="Ride status changed, please retry")
 
     await submit_background_task(_run_process_async(ride_id), name=f"process_{ride_id}")
 

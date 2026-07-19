@@ -3,6 +3,7 @@ import logging
 import math
 import subprocess
 import tempfile
+import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from ultralytics import YOLO
 
 from ..config.settings import (
     MAX_WORKERS,
+    MAX_CONCURRENT_RIDES,
+    RIDE_PROCESS_TIMEOUT,
     MODEL_PATH,
     MERGE_RADIUS_METERS,
     RAW_DATA_BUCKET,
@@ -31,6 +34,7 @@ from ..utils.gps_processor import GPSProcessor
 logger = logging.getLogger(__name__)
 
 _thread_pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+_concurrency_semaphore = threading.Semaphore(MAX_CONCURRENT_RIDES)
 
 
 class RideProcessor:
@@ -131,7 +135,16 @@ class RideProcessor:
         ride_id = ride.get("id")
         if not ride_id:
             raise KeyError("Claimed ride row has no id column")
-        svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
+        result = (
+            client.table("rides_metadata")
+            .update({"status": "processing"})
+            .eq("id", ride_id)
+            .eq("status", "queued")
+            .execute()
+        )
+        if not result.data:
+            logger.info("Ride %s already claimed by another worker, skipping", ride_id)
+            return None
         ride["status"] = "processing"
         return ride
 
@@ -312,9 +325,22 @@ class RideProcessor:
     # ---- main process ----
 
     async def process_ride_async(self, ride: dict[str, Any]) -> dict[str, Any]:
-        """Run process_ride in a thread pool to avoid blocking the event loop."""
+        """Run process_ride in a thread pool with concurrency limit and timeout."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(_thread_pool, self.process_ride, ride)
+
+        def _guarded():
+            with _concurrency_semaphore:
+                return self.process_ride(ride)
+
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(_thread_pool, _guarded),
+                timeout=RIDE_PROCESS_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            ride_id = str(ride.get("id") or "")
+            self._mark_failed(ride_id, f"Processing timed out after {RIDE_PROCESS_TIMEOUT}s")
+            raise TimeoutError(f"Ride {ride_id} exceeded {RIDE_PROCESS_TIMEOUT}s timeout")
 
     def process_ride(self, ride: dict[str, Any]) -> dict[str, Any]:
         ride_id = str(ride.get("id") or "")
@@ -384,7 +410,15 @@ class RideProcessor:
         if not rows:
             raise KeyError(f"Ride {ride_id} not found")
         ride = rows[0]
-        self._svc.update("rides_metadata", {"status": "processing"}, id=ride_id)
+        result = (
+            self._svc.client.table("rides_metadata")
+            .update({"status": "processing"})
+            .eq("id", ride_id)
+            .eq("status", ride.get("status", ""))
+            .execute()
+        )
+        if not result.data:
+            raise RuntimeError(f"Ride {ride_id} status changed during claim, retry needed")
         ride["status"] = "processing"
         try:
             return self.process_ride(ride)

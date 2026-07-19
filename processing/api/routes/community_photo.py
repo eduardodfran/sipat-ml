@@ -17,16 +17,26 @@ from ...services.supabase_client import get_supabase_service
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["community-photo"])
 
+_shared_model = None
+
+
+def _get_yolo_model():
+    global _shared_model
+    if _shared_model is None:
+        from ultralytics import YOLO
+        if not MODEL_PATH.exists():
+            return None
+        _shared_model = YOLO(str(MODEL_PATH))
+    return _shared_model
+
 
 def _run_yolo_on_image(image_path: str) -> dict:
     try:
-        from ultralytics import YOLO
-
-        if not MODEL_PATH.exists():
+        model = _get_yolo_model()
+        if model is None:
             logger.warning("YOLO model not found at %s", MODEL_PATH)
             return {}
 
-        model = YOLO(str(MODEL_PATH))
         results = model(image_path, conf=YOLO_CONFIDENCE, verbose=False)
 
         if not results or len(results) == 0:
