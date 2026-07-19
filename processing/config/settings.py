@@ -54,6 +54,7 @@ WORKERS = int(os.getenv("SIPAT_ML_WORKERS", "1"))
 WORKER_TIMEOUT = int(os.getenv("SIPAT_ML_WORKER_TIMEOUT", "120"))
 MAX_CONCURRENT_RIDES = int(os.getenv("SIPAT_ML_MAX_CONCURRENT_RIDES", "4"))
 RIDE_PROCESS_TIMEOUT = int(os.getenv("SIPAT_ML_RIDE_TIMEOUT", "600"))
+BATCH_INSERT_SIZE = int(os.getenv("SIPAT_ML_BATCH_INSERT_SIZE", "500"))
 
 # ---- connection pool ----
 SUPABASE_POOL_SIZE = int(os.getenv("SIPAT_ML_SUPABASE_POOL_SIZE", "10"))

@@ -18,6 +18,7 @@ from ..config.settings import (
     MAX_WORKERS,
     MAX_CONCURRENT_RIDES,
     RIDE_PROCESS_TIMEOUT,
+    BATCH_INSERT_SIZE,
     MODEL_PATH,
     MERGE_RADIUS_METERS,
     RAW_DATA_BUCKET,
@@ -158,7 +159,9 @@ class RideProcessor:
         if not raw_batch:
             return
         try:
-            self._svc.insert("raw_detections", raw_batch)
+            for i in range(0, len(raw_batch), BATCH_INSERT_SIZE):
+                chunk = raw_batch[i : i + BATCH_INSERT_SIZE]
+                self._svc.insert("raw_detections", chunk)
         except APIError as e:
             raise RuntimeError(self._friendly_error(e, "inserting raw_detections")) from e
 
@@ -354,14 +357,12 @@ class RideProcessor:
         with tempfile.TemporaryDirectory(prefix=f"ride_{ride_id}_") as tmp:
             tmp_dir = Path(tmp)
 
-            video_bytes = self._blob.download_file(video_path, RAW_DATA_BUCKET)
             video_local = tmp_dir / Path(video_path).name
-            video_local.write_bytes(video_bytes)
+            self._blob.download_file_streaming(video_path, video_local, RAW_DATA_BUCKET)
             video_local = self._repair_video(video_local)
 
-            gps_bytes = self._blob.download_file(gps_path, RAW_DATA_BUCKET)
             gps_local = tmp_dir / Path(gps_path).name
-            gps_local.write_bytes(gps_bytes)
+            self._blob.download_file_streaming(gps_path, gps_local, RAW_DATA_BUCKET)
 
             gps_processor = GPSProcessor.from_json_file(gps_local)
             builder = DetectionBatchBuilder(
