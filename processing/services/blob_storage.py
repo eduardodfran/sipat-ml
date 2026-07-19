@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import logging
@@ -73,6 +74,24 @@ class BlobStorageService:
             download_stream = blob_client.download_blob(timeout=120)
             return download_stream.readall()
         return self._execute_with_circuit(_do)
+
+    @_retry_strategy
+    def download_file_streaming(self, object_path: str, local_path: Path, container: str = CONTAINER_NAME) -> Path:
+        """Download a blob directly to disk in chunks, avoiding full in-memory load."""
+        def _do():
+            blob_client = self.client.get_blob_client(container=container, blob=object_path)
+            download_stream = blob_client.download_blob(timeout=120)
+            with open(local_path, "wb") as f:
+                for chunk in download_stream.chunks():
+                    f.write(chunk)
+            return local_path
+        return self._execute_with_circuit(_do)
+
+    def get_blob_size(self, object_path: str, container: str = CONTAINER_NAME) -> int:
+        """Get blob size in bytes without downloading it."""
+        blob_client = self.client.get_blob_client(container=container, blob=object_path)
+        props = blob_client.get_blob_properties()
+        return props.size or 0
 
     # ---- upload ----
 

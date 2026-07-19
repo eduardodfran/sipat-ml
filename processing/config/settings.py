@@ -58,6 +58,7 @@ RIDE_PROCESS_TIMEOUT = int(os.getenv("SIPAT_ML_RIDE_TIMEOUT", "600"))
 # ---- connection pool ----
 SUPABASE_POOL_SIZE = int(os.getenv("SIPAT_ML_SUPABASE_POOL_SIZE", "10"))
 AZURE_MAX_CONNECTIONS = int(os.getenv("SIPAT_ML_AZURE_MAX_CONNECTIONS", "10"))
+MAX_VIDEO_SIZE_MB = int(os.getenv("SIPAT_ML_MAX_VIDEO_SIZE_MB", "2048"))
 
 # ---- geo constants ----
 EARTH_RADIUS_METERS = 6371008.8
