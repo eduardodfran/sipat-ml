@@ -240,6 +240,55 @@ class DetectionBatchBuilder:
             f"{ANNOTATED_FRAMES_BUCKET}/{object_path}"
         )
 
+    def upload_frames_batch(
+        self,
+        frames: dict[int, Path],
+        ride_id: str,
+        batch_size: int = 100,
+    ) -> dict[int, str]:
+        """Upload annotated frames in batches to avoid memory pressure and per-request overhead.
+
+        Args:
+            frames: Dict mapping frame index to local file path.
+            ride_id: The ride ID for path construction.
+            batch_size: Number of frames to upload per batch.
+
+        Returns:
+            Dict mapping frame index to blob path.
+        """
+        import concurrent.futures
+
+        frame_map: dict[int, str] = {}
+
+        sorted_indices = sorted(frames.keys())
+        for batch_start in range(0, len(sorted_indices), batch_size):
+            batch_indices = sorted_indices[batch_start : batch_start + batch_size]
+            batch = {i: frames[i] for i in batch_indices}
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
+                futures = {
+                    executor.submit(self._upload_one_frame, ride_id, idx, path): idx
+                    for idx, path in batch.items()
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    idx = futures[future]
+                    frame_map[idx] = future.result()
+
+            batch_num = batch_start // batch_size + 1
+            total_batches = (len(sorted_indices) + batch_size - 1) // batch_size
+            logger.info(
+                f"[batch] uploaded frame batch {batch_num}/{total_batches} "
+                f"({len(batch)} frames)"
+            )
+
+        return frame_map
+
+    def _upload_one_frame(self, ride_id: str, idx: int, path: Path) -> str:
+        """Upload a single annotated frame."""
+        blob_path = f"{ride_id}/frames_annotated/frame_{idx:06d}.jpg"
+        self._blob.upload_image(path, blob_path)
+        return blob_path
+
     # ----- detection coordinate resolution -----
 
     @staticmethod
