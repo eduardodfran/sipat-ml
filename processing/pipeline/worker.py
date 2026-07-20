@@ -153,14 +153,20 @@ class RideProcessor:
         self._svc.update("rides_metadata", {"status": "failed", "error_log": error_message}, id=ride_id)
 
     def _mark_completed(self, ride_id: str) -> None:
-        self._svc.update("rides_metadata", {"status": "completed"}, id=ride_id)
+        self._svc.update("rides_metadata", {"status": "completed", "progress_pct": 100, "progress_stage": "done", "progress_message": "Processing complete"}, id=ride_id)
 
     def _update_progress(self, ride_id: str, pct: int, stage: str, message: str) -> None:
-        self._svc.update("rides_metadata", {
-            "progress_pct": pct,
-            "progress_stage": stage,
-            "progress_message": message,
-        }, id=ride_id)
+        print(f"[DIAG] _update_progress({ride_id[:8]}, pct={pct}, stage={stage})", flush=True)
+        try:
+            result = self._svc.update("rides_metadata", {
+                "progress_pct": pct,
+                "progress_stage": stage,
+                "progress_message": message,
+            }, id=ride_id)
+            print(f"[DIAG] _update_progress OK for {ride_id[:8]} pct={pct}", flush=True)
+        except Exception as exc:
+            print(f"[DIAG] _update_progress FAILED for {ride_id[:8]} pct={pct}: {exc}", flush=True)
+            logger.warning("[%s] Progress update failed (pct=%s stage=%s): %s", ride_id[:8], pct, stage, exc)
 
     def _insert_raw_detections(self, raw_batch: list[dict[str, Any]]) -> None:
         if not raw_batch:
@@ -361,6 +367,7 @@ class RideProcessor:
         gps_path = self._resolve_gps_path(ride, video_path)
         user_id = ride.get("user_id")
 
+        print(f"[DIAG] process_ride started for {ride_id[:8]}, video={video_path}, gps={gps_path}", flush=True)
         logger.info("[%s] ▶ Starting processing", ride_id[:8])
 
         with tempfile.TemporaryDirectory(prefix=f"ride_{ride_id}_") as tmp:

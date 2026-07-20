@@ -138,20 +138,20 @@ class DetectionBatchBuilder:
                             )
                         ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=cal)
 
-                frame = _apply_clahe(frame)
-                results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
+                    frame = frame  # raw frames — model trained on unprocessed input
+                    results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
-                processed_count = frame_count // FRAME_SKIP
-                if processed_count > 0 and processed_count % max(1, processable_frames // 10) == 0 and processed_count != last_progress_log:
-                    pct = (processed_count / processable_frames) * 100 if processable_frames else 0
-                    elapsed_sec = frame_count / fps
-                    msg = f"{processed_count}/{processable_frames} frames ({pct:.0f}%)"
-                    logger.info("  ▶ Detection: %s | %.1fs elapsed | %d detections so far",
-                                msg, elapsed_sec, detection_count)
-                    if self._progress_callback:
-                        db_pct = 25 + int(pct * 0.6)  # map 25-85 range
-                        self._progress_callback(min(db_pct, 85), "detecting", f"YOLO: {msg}")
-                    last_progress_log = processed_count
+                    processed_count = frame_count // FRAME_SKIP
+                    if processed_count > 0 and processed_count % max(1, processable_frames // 10) == 0 and processed_count != last_progress_log:
+                        pct = (processed_count / processable_frames) * 100 if processable_frames else 0
+                        elapsed_sec = frame_count / fps
+                        msg = f"{processed_count}/{processable_frames} frames ({pct:.0f}%)"
+                        logger.info("  ▶ Detection: %s | %.1fs elapsed | %d detections so far",
+                                    msg, elapsed_sec, detection_count)
+                        if self._progress_callback:
+                            db_pct = 25 + int(pct * 0.6)  # map 25-85 range
+                            self._progress_callback(min(db_pct, 85), "detecting", f"YOLO: {msg}")
+                        last_progress_log = processed_count
 
                     for result in results:
                         if not getattr(result, "boxes", None):

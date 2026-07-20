@@ -15,7 +15,7 @@ def _rate_limit_key(request):
 limiter = Limiter(key_func=_rate_limit_key)
 
 UPLOAD_LIMIT = os.getenv("RATE_LIMIT_UPLOAD", "10/hour")
-PROCESS_LIMIT = os.getenv("RATE_LIMIT_PROCESS", "5/hour")
+PROCESS_LIMIT = os.getenv("RATE_LIMIT_PROCESS", "20/hour")
 READ_LIMIT = os.getenv("RATE_LIMIT_READ", "60/minute")
 DELETE_LIMIT = os.getenv("RATE_LIMIT_DELETE", "10/hour")
 HEALTH_LIMIT = os.getenv("RATE_LIMIT_HEALTH", "60/minute")

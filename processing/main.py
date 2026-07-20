@@ -73,7 +73,7 @@ def _recover_stale_processing_rides() -> None:
         for ride_id in ids:
             svc.update(
                 "rides_metadata",
-                {"status": "failed", "error_log": "Server restarted while ride was being processed"},
+                {"status": "failed", "error_log": "Server restarted while ride was being processed", "progress_pct": 0, "progress_stage": "", "progress_message": ""},
                 id=ride_id,
             )
     except Exception as e:
@@ -106,7 +106,35 @@ def _run_migrations() -> None:
         conn.close()
         logger.info("Migration: added caption column to community_photos, progress columns to rides_metadata")
     except Exception as e:
-        logger.warning("Migration failed (non-fatal): %s", e)
+        logger.warning("Direct DB migration failed (non-fatal): %s", e)
+        logger.warning("If progress bar doesn't work, run this SQL in Supabase SQL Editor:")
+        logger.warning("ALTER TABLE rides_metadata ADD COLUMN IF NOT EXISTS progress_pct INTEGER DEFAULT 0;")
+        logger.warning("ALTER TABLE rides_metadata ADD COLUMN IF NOT EXISTS progress_stage TEXT DEFAULT '';")
+        logger.warning("ALTER TABLE rides_metadata ADD COLUMN IF NOT EXISTS progress_message TEXT DEFAULT '';")
+
+    # Verify progress columns via REST API
+    try:
+        svc = get_supabase_service()
+        svc.client.table("rides_metadata").select("progress_pct").limit(1).execute()
+        logger.info("✓ progress_pct column exists and is readable")
+    except Exception as e:
+        logger.error("✗ progress_pct column MISSING or not readable: %s", e)
+        logger.error("RUN THE SQL ABOVE IN SUPABASE SQL EDITOR then restart")
+
+    # Test that we can actually WRITE to progress_pct (not just read)
+    try:
+        svc = get_supabase_service()
+        rows = svc.client.table("rides_metadata").select("id,progress_pct").limit(1).execute().data
+        if rows:
+            test_id = rows[0]["id"]
+            old_val = rows[0].get("progress_pct", 0) or 0
+            svc.client.table("rides_metadata").update({"progress_pct": old_val}).eq("id", test_id).execute()
+            logger.info("✓ progress_pct UPDATE works (wrote %s back to ride %s)", old_val, test_id[:8])
+        else:
+            logger.info("⊘ No rides in DB, skipping UPDATE test")
+    except Exception as e:
+        logger.error("✗ progress_pct UPDATE FAILED — progress bar will NOT work: %s", e)
+        logger.error("Check RLS policies on rides_metadata in Supabase Dashboard → Authentication → Policies")
 
 
 @asynccontextmanager
