@@ -44,6 +44,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         elapsed_ms = (time.monotonic() - start) * 1000
         response.headers["X-Request-ID"] = req_id
 
+        # Skip logging health check probes to reduce noise
+        if request.url.path.startswith("/health"):
+            return response
+
         if response.status_code >= 400:
             logger.warning(
                 "%s %s [%s] -> %d %.1fms",

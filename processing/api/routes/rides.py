@@ -20,7 +20,7 @@ async def list_rides(
     auth = svc.validate_token(authorization)
     user_id = auth.get("user_id") or auth.get("sub")
 
-    columns = "id,user_id,video_bucket_path,gps_bucket_path,status,error_log,created_at"
+    columns = "id,user_id,video_bucket_path,gps_bucket_path,status,error_log,created_at,progress_pct,progress_stage,progress_message"
     query = svc.table("rides_metadata").select(columns, count="exact").eq("user_id", user_id)
     result = query.range(offset, offset + limit - 1).execute()
 

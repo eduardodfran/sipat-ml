@@ -94,7 +94,6 @@ async def readiness_check(request: Request):
         checks["supabase"] = "ok"
     except Exception as e:
         checks["supabase"] = f"error: {type(e).__name__}"
-        logger.warning("Readiness check – Supabase failed: %s", e)
 
     try:
         blob_svc = get_blob_storage_service()
@@ -102,9 +101,11 @@ async def readiness_check(request: Request):
         checks["azure_blob"] = "ok"
     except Exception as e:
         checks["azure_blob"] = f"error: {type(e).__name__}"
-        logger.warning("Readiness check – Azure Blob failed: %s", e)
 
     all_ok = all(v == "ok" for v in checks.values())
+
+    if not all_ok:
+        logger.warning("Readiness check failed: %s", checks)
 
     return JSONResponse(
         content=ReadinessResponse(

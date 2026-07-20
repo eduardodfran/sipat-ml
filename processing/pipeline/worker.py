@@ -155,6 +155,13 @@ class RideProcessor:
     def _mark_completed(self, ride_id: str) -> None:
         self._svc.update("rides_metadata", {"status": "completed"}, id=ride_id)
 
+    def _update_progress(self, ride_id: str, pct: int, stage: str, message: str) -> None:
+        self._svc.update("rides_metadata", {
+            "progress_pct": pct,
+            "progress_stage": stage,
+            "progress_message": message,
+        }, id=ride_id)
+
     def _insert_raw_detections(self, raw_batch: list[dict[str, Any]]) -> None:
         if not raw_batch:
             return
@@ -354,16 +361,24 @@ class RideProcessor:
         gps_path = self._resolve_gps_path(ride, video_path)
         user_id = ride.get("user_id")
 
+        logger.info("[%s] ▶ Starting processing", ride_id[:8])
+
         with tempfile.TemporaryDirectory(prefix=f"ride_{ride_id}_") as tmp:
             tmp_dir = Path(tmp)
 
+            self._update_progress(ride_id, 5, "downloading", "Downloading video...")
+            logger.info("[%s]   1/5 Downloading video...", ride_id[:8])
             video_local = tmp_dir / Path(video_path).name
             self._blob.download_file_streaming(video_path, video_local, RAW_DATA_BUCKET)
             video_local = self._repair_video(video_local)
 
+            self._update_progress(ride_id, 15, "downloading", "Downloading GPS data...")
+            logger.info("[%s]   2/5 Downloading GPS data...", ride_id[:8])
             gps_local = tmp_dir / Path(gps_path).name
             self._blob.download_file_streaming(gps_path, gps_local, RAW_DATA_BUCKET)
 
+            self._update_progress(ride_id, 25, "detecting", "Running YOLO detection...")
+            logger.info("[%s]   3/5 Running YOLO detection...", ride_id[:8])
             gps_processor = GPSProcessor.from_json_file(gps_local)
             builder = DetectionBatchBuilder(
                 ride_id=ride_id,
@@ -371,10 +386,17 @@ class RideProcessor:
                 supabase=self._supabase,
                 model=self.model,
                 supabase_url=self._svc.url,
+                progress_callback=lambda pct, stage, msg: self._update_progress(ride_id, pct, stage, msg),
             )
             raw_batch = builder.build(video_local, gps_processor)
+
+            self._update_progress(ride_id, 85, "saving", f"Saving {len(raw_batch)} detections...")
+            logger.info("[%s]   4/5 Saving %d detections to database...", ride_id[:8], len(raw_batch))
             self._insert_raw_detections(raw_batch)
             self._sync_potholes(raw_batch, ride_id)
+
+            self._update_progress(ride_id, 95, "finalizing", "Finalizing...")
+            logger.info("[%s]   5/5 Finalizing...", ride_id[:8])
             self._mark_completed(ride_id)
 
             result = {
@@ -385,7 +407,7 @@ class RideProcessor:
                 "source_video_object": video_path,
                 "source_gps_object": gps_path,
             }
-            logger.info("Finished ride %s: %d detections", ride_id, len(raw_batch))
+            logger.info("[%s] ✓ Done — %d detections found", ride_id[:8], len(raw_batch))
             return result
 
     def process_next_queued(self) -> dict[str, Any] | None:

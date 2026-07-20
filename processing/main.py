@@ -38,6 +38,25 @@ def _configure_logging() -> None:
     root.addHandler(handler)
     root.setLevel(logging.INFO)
 
+    # Suppress noisy library loggers
+    for name in (
+        "azure",
+        "azure.core",
+        "azure.core.pipeline",
+        "azure.core.pipeline.policies",
+        "azure.core.pipeline.policies.http_logging_policy",
+        "azure.storage",
+        "azure.storage.blob",
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "postgrest",
+        "supabase",
+        "storage3",
+        "httpx._transports",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
 
 _configure_logging()
 logger = logging.getLogger(__name__)
@@ -79,10 +98,13 @@ def _run_migrations() -> None:
         )
         cur = conn.cursor()
         cur.execute("ALTER TABLE community_photos ADD COLUMN IF NOT EXISTS caption TEXT;")
+        cur.execute("ALTER TABLE rides_metadata ADD COLUMN IF NOT EXISTS progress_pct INTEGER DEFAULT 0;")
+        cur.execute("ALTER TABLE rides_metadata ADD COLUMN IF NOT EXISTS progress_stage TEXT DEFAULT '';")
+        cur.execute("ALTER TABLE rides_metadata ADD COLUMN IF NOT EXISTS progress_message TEXT DEFAULT '';")
         conn.commit()
         cur.close()
         conn.close()
-        logger.info("Migration: added caption column to community_photos")
+        logger.info("Migration: added caption column to community_photos, progress columns to rides_metadata")
     except Exception as e:
         logger.warning("Migration failed (non-fatal): %s", e)
 
