@@ -255,6 +255,19 @@ class RideProcessor:
             key=lambda x: x["video_timestamp"],
         )
 
+    def _generate_caption(self, severity: str, hits: int, area_m2: float | None) -> str:
+        parts = [f"{severity} pothole detected"]
+        detail = []
+        if hits:
+            detail.append(f"{hits} report{'s' if hits != 1 else ''}")
+        if area_m2 and area_m2 > 0:
+            detail.append(f"{area_m2:.2f} m\u00b2")
+        if detail:
+            parts[0] += ". " + ", ".join(detail)
+        else:
+            parts[0] += "."
+        return parts[0]
+
     def _sync_potholes(self, raw_batch: list[dict[str, Any]], ride_id: str) -> int:
         clusterer = PotholeClusterer()
         clustered = clusterer.cluster(raw_batch)
@@ -297,16 +310,22 @@ class RideProcessor:
                     match.get("user_detections") if isinstance(match.get("user_detections"), list) else [],
                     pothole.get("user_detections") or [],
                 )
+                new_total_hits = current_hits + new_hits
+                existing_area = match.get("max_area_m2") or pothole.get("max_area_m2")
+                new_caption = self._generate_caption(merged_sev, new_total_hits, existing_area)
                 client.schema("public").from_("verified_potholes").update({
-                    "total_detection_hits": current_hits + new_hits,
+                    "total_detection_hits": new_total_hits,
                     "worst_severity": merged_sev,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "user_detections": merged_users,
+                    "caption": new_caption,
                 }).eq("id", match_id).execute()
                 match["total_detection_hits"] = current_hits + new_hits
                 match["worst_severity"] = merged_sev
                 match["user_detections"] = merged_users
             else:
+                area_m2 = pothole.get("max_area_m2")
+                caption = self._generate_caption(final_sev, new_hits, area_m2)
                 result = client.schema("public").from_("verified_potholes").insert({
                     "ride_id": ride_id,
                     "consolidated_latitude": lat,
@@ -315,6 +334,7 @@ class RideProcessor:
                     "total_detection_hits": new_hits,
                     "status": "queued",
                     "user_detections": pothole.get("user_detections") or [],
+                    "caption": caption,
                 }).execute()
                 new_id = result.data[0]["id"] if result.data else None
                 existing.append({

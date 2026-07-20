@@ -14,6 +14,7 @@ from .api.routes.community_photo import router as community_photo_router
 from .api.routes.health import router as health_router
 from .api.routes.process import router as process_router
 from .api.routes.rides import router as rides_router
+from .api.routes.verified_potholes import router as verified_potholes_router
 from .background_tasks import signal_shutdown, wait_for_tasks
 from .middleware import RequestIDMiddleware, request_id_var
 from .rate_limiter import limiter
@@ -180,6 +181,7 @@ app.include_router(upload_router)
 app.include_router(rides_router)
 app.include_router(process_router)
 app.include_router(health_router)
+app.include_router(verified_potholes_router)
 app.include_router(community_photo_router)
 
 
