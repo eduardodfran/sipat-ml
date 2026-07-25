@@ -28,7 +28,7 @@ _retry_strategy = retry(
 load_dotenv()
 
 CONTAINER_NAME = "raw-road-data"
-SAS_EXPIRY_MINUTES = 15
+SAS_EXPIRY_MINUTES = 60
 
 
 class BlobStorageService:
