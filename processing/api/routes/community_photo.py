@@ -83,6 +83,17 @@ async def upload_community_photo(
     auth = svc.validate_token(authorization)
     user_id = auth.get("user_id") or auth.get("sub")
 
+    reporter_username = None
+    reporter_avatar = None
+    if user_id:
+        try:
+            profiles = svc.select("profiles", "username, avatar_url", id=user_id)
+            if profiles:
+                reporter_username = profiles[0].get("username")
+                reporter_avatar = profiles[0].get("avatar_url")
+        except Exception as exc:
+            logger.warning("Could not fetch profile for %s: %s", user_id, exc)
+
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(400, "File must be an image")
 
@@ -111,6 +122,8 @@ async def upload_community_photo(
         "image_url": image_url,
         "latitude": latitude,
         "longitude": longitude,
+        "reporter_username": reporter_username,
+        "reporter_avatar": reporter_avatar,
         "caption": caption if caption else None,
         "street": addr.get("street") if addr else None,
         "barangay": addr.get("barangay") if addr else None,
