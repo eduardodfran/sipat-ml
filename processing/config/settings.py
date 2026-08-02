@@ -5,9 +5,15 @@ CURRENT_DIR = Path(__file__).resolve().parent.parent
 
 # ---- YOLO model ----
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
-YOLO_CONFIDENCE = 0.25
+YOLO_CONFIDENCE = 0.30
 _IOU_THRESHOLD = 0.7
 FRAME_SKIP = 5
+
+# ---- frame quality filters ----
+# Laplacian variance below this = too blurry for reliable detection
+BLUR_THRESHOLD = 80.0
+# Mean brightness below this = too dark for reliable detection
+DARK_THRESHOLD = 30.0
 
 # ---- frame cropping ----
 # RDD2022 was trained on forward-facing vehicle cameras where the road fills

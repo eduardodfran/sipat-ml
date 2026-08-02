@@ -11,7 +11,16 @@ import numpy as np
 from supabase import Client
 from ultralytics import YOLO
 
-from .config.settings import ANNOTATED_FRAMES_BUCKET, EXCLUDED_CLASSES, YOLO_CONFIDENCE, _IOU_THRESHOLD, FRAME_SKIP, CROP_TOP_RATIO
+from .config.settings import (
+    ANNOTATED_FRAMES_BUCKET,
+    BLUR_THRESHOLD,
+    CROP_TOP_RATIO,
+    DARK_THRESHOLD,
+    EXCLUDED_CLASSES,
+    FRAME_SKIP,
+    YOLO_CONFIDENCE,
+    _IOU_THRESHOLD,
+)
 from .core.severity import frame_area_pct_to_severity
 from .utils.camera_calibration import CameraCalibration, load_calibration
 from .utils.gps_processor import GPSProcessor
@@ -138,7 +147,23 @@ class DetectionBatchBuilder:
                             )
                         ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=cal)
 
-                    frame = frame  # raw frames — model trained on unprocessed input
+                    # --- frame quality gate: skip blurry / dark frames ---
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                    mean_brightness = cv2.mean(gray)[0]
+
+                    if laplacian_var < BLUR_THRESHOLD:
+                        prev_frame_boxes = []
+                        continue
+
+                    if mean_brightness < DARK_THRESHOLD:
+                        prev_frame_boxes = []
+                        continue
+
+                    # Enhance contrast on clear frames only
+                    if laplacian_var > BLUR_THRESHOLD * 2:
+                        frame = _apply_clahe(frame)
+
                     results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
                     processed_count = frame_count // FRAME_SKIP
