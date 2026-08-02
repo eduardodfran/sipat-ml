@@ -106,6 +106,7 @@ class DetectionBatchBuilder:
             ipm: IPMTransformer | None = None
             frame_count = 0
             detection_count = 0
+            bev_saved = False
             prev_frame_boxes: list[list[float]] = []
             last_progress_log = 0
 
@@ -184,6 +185,43 @@ class DetectionBatchBuilder:
                             continue
 
                         detection_count += 1
+
+                        # Save first detection as original + BEV for thesis proof
+                        if not bev_saved and ipm is not None:
+                            bev_saved = True
+                            try:
+                                annotated_frame = result.plot()
+                                orig_path = f"annotated-frames/{self.ride_id}/first_detection_original.jpg"
+                                bev_img = ipm.warp_to_bev(frame)
+                                _, orig_enc = cv2.imencode(".jpg", annotated_frame)
+                                _, bev_enc = cv2.imencode(".jpg", bev_img)
+                                self.supabase.storage.from_(
+                                    ANNOTATED_FRAMES_BUCKET
+                                ).upload(
+                                    path=orig_path,
+                                    file=orig_enc.tobytes(),
+                                    file_options={
+                                        "content-type": "image/jpeg",
+                                        "upsert": "true",
+                                    },
+                                )
+                                bev_path = f"annotated-frames/{self.ride_id}/first_detection_bev.jpg"
+                                self.supabase.storage.from_(
+                                    ANNOTATED_FRAMES_BUCKET
+                                ).upload(
+                                    path=bev_path,
+                                    file=bev_enc.tobytes(),
+                                    file_options={
+                                        "content-type": "image/jpeg",
+                                        "upsert": "true",
+                                    },
+                                )
+                                logger.info(
+                                    "Saved first detection frame + BEV for ride %s",
+                                    self.ride_id,
+                                )
+                            except Exception as bev_err:
+                                logger.warning("Failed to save BEV frame: %s", bev_err)
 
                         try:
                             annotated_frame = result.plot()

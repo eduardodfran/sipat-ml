@@ -185,6 +185,14 @@ class IPMTransformer:
 
         return dx_meters, dy_meters
 
+    def warp_to_bev(self, frame: np.ndarray) -> np.ndarray:
+        """Transform a frame to bird-eye-view using the perspective matrix."""
+        ctx = self.context
+        return cv2.warpPerspective(
+            frame, ctx.matrix,
+            (ctx.output_width_px, ctx.output_height_px),
+        )
+
     def compute_phys_area(self, bbox_normalized: list[float]) -> float:
         ctx = self.context
         x1, y1, x2, y2 = bbox_normalized
