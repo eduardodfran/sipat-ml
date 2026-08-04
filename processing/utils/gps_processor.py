@@ -22,6 +22,7 @@ class GPSIndex:
     timestamps: list[float]
     latlng: list[tuple[float, float]]
     headings: list[float | None]
+    imu_headings: list[float | None]
 
 
 class GPSProcessor:
@@ -54,8 +55,21 @@ class GPSProcessor:
                 return None
         return None
 
+    @staticmethod
+    def _parse_imu_heading(item: dict[str, Any]) -> float | None:
+        """Extract heading from gyroscope yaw rate (gz) via integration."""
+        gz = item.get("gyro_z")
+        if gz is None:
+            return None
+        try:
+            # gyroscope gz is yaw rate in rad/s
+            # Approximate heading by integrating yaw rate from start
+            return float(gz)
+        except (TypeError, ValueError):
+            return None
+
     def _build_gps_index(self, gps_data: list[dict[str, Any]]) -> GPSIndex:
-        samples: list[tuple[float, float, float, float | None]] = []
+        samples: list[tuple[float, float, float, float | None, float | None]] = []
         for item in gps_data:
             try:
                 timestamp = float(item["timestamp_seconds"])
@@ -64,7 +78,8 @@ class GPSProcessor:
             except (KeyError, TypeError, ValueError):
                 continue
             heading = self._parse_heading(item)
-            samples.append((timestamp, lat, lng, heading))
+            imu_heading = self._parse_imu_heading(item)
+            samples.append((timestamp, lat, lng, heading, imu_heading))
 
         if not samples:
             raise ValueError(
@@ -72,10 +87,28 @@ class GPSProcessor:
             )
 
         samples.sort(key=lambda row: row[0])
+
+        # Integrate gyroscope yaw rate to get absolute heading
+        imu_headings = [row[4] for row in samples]
+        if any(h is not None for h in imu_headings):
+            integrated_heading: float | None = None
+            for i in range(len(samples)):
+                gz = samples[i][4]
+                if gz is not None:
+                    if integrated_heading is None:
+                        integrated_heading = 0.0
+                    if i > 0:
+                        dt = samples[i][0] - samples[i - 1][0]
+                        integrated_heading += gz * dt  # integrate yaw rate
+                    imu_headings[i] = (integrated_heading * 180.0 / math.pi) % 360.0
+                elif integrated_heading is not None:
+                    imu_headings[i] = integrated_heading
+
         return GPSIndex(
             timestamps=[row[0] for row in samples],
             latlng=[(row[1], row[2]) for row in samples],
             headings=[row[3] for row in samples],
+            imu_headings=imu_headings,
         )
 
     # ----- stationary ride detection -----
@@ -152,6 +185,17 @@ class GPSProcessor:
         if heading1 is not None and heading2 is not None:
             heading = self._lerp_heading_degrees(heading1, heading2, fraction)
 
+        # Use IMU heading if GPS heading unavailable
+        if heading is None:
+            imu1 = self.gps_index.imu_headings[pos - 1]
+            imu2 = self.gps_index.imu_headings[pos]
+            if imu1 is not None and imu2 is not None:
+                heading = self._lerp_heading_degrees(imu1, imu2, fraction)
+            elif imu1 is not None:
+                heading = imu1
+            elif imu2 is not None:
+                heading = imu2
+
         if abs(current_time - t1) <= abs(t2 - current_time):
             idx = pos - 1
         else:
@@ -170,6 +214,12 @@ class GPSProcessor:
     # ----- heading estimation -----
 
     def estimate_heading(self, idx: int) -> float | None:
+        # Prefer IMU-integrated heading when available
+        imu_heading = self.gps_index.imu_headings[idx]
+        if imu_heading is not None:
+            return imu_heading
+
+        # Fall back to GPS-based bearing estimation
         sample_count = len(self.gps_index.latlng)
         if sample_count < 5:
             return None
