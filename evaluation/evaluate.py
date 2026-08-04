@@ -5,7 +5,7 @@ Compares AI-generated pothole measurements with manual ground-truth data.
 Computes MAE (Mean Absolute Error) and classification accuracy.
 
 Usage:
-    python evaluate.py --video test_video.mp4 --ground-truth ground_truth.csv
+    python evaluate.py --video test_video.mp4 --ground-truth ground_truth.csv [--gps gps_segment_1.csv]
 
 Ground truth CSV format:
     lat,lng,length_cm,width_cm,severity
@@ -36,6 +36,8 @@ from processing.config.settings import (
 )
 from processing.utils.camera_calibration import load_calibration
 from processing.utils.ipm_transformer import IPMTransformer
+from processing.utils.gps_processor import GPSProcessor
+from processing.utils.geo_math import haversine_distance_meters
 
 
 def load_ground_truth(csv_path: str) -> list[dict]:
@@ -58,8 +60,8 @@ def load_ground_truth(csv_path: str) -> list[dict]:
     return gt
 
 
-def run_detection(video_path: str) -> list[dict]:
-    """Run YOLO + IPM detection on a video, return all detections with physical area."""
+def run_detection(video_path: str, gps_processor: GPSProcessor | None = None) -> list[dict]:
+    """Run YOLO + IPM detection on a video, return all detections with physical area and GPS."""
     from ultralytics import YOLO
 
     model = YOLO(str(MODEL_PATH))
@@ -116,6 +118,8 @@ def run_detection(video_path: str) -> list[dict]:
 
         results = model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
+        timestamp = frame_count / fps
+
         for result in results:
             if not getattr(result, "boxes", None):
                 continue
@@ -134,13 +138,24 @@ def run_detection(video_path: str) -> list[dict]:
                 confidence = float(box.conf.item())
                 phys_area = ipm.compute_phys_area(bbox)
 
-                detections.append({
+                det = {
                     "frame": frame_count,
-                    "timestamp": frame_count / fps,
+                    "timestamp": timestamp,
                     "class": class_name,
                     "confidence": confidence,
                     "area_m2": phys_area,
-                })
+                }
+
+                # Interpolate GPS if available
+                if gps_processor is not None:
+                    try:
+                        _, lat, lng, heading = gps_processor.interpolate_sample(timestamp)
+                        det["lat"] = lat
+                        det["lng"] = lng
+                    except Exception:
+                        pass
+
+                detections.append(det)
 
     capture.release()
     print(f"Processed {frame_count // FRAME_SKIP} frames, found {len(detections)} detections")
@@ -152,20 +167,42 @@ def match_detections_to_ground_truth(
     ground_truth: list[dict],
     match_radius_m: float = 5.0,
 ) -> list[dict]:
-    """Match AI detections to nearest ground truth by area (simplified)."""
+    """Match AI detections to ground truth.
+
+    Strategy:
+    1. If both detection and GT have GPS, match by proximity first (within match_radius_m),
+       then by closest area among nearby matches.
+    2. If GPS unavailable, match by closest area only.
+    """
     matched = []
     used_gt = set()
 
+    has_gps = any("lat" in d for d in detections)
+
     for det in detections:
         best_match = None
-        best_area_diff = float("inf")
+        best_score = float("inf")
 
         for i, gt in enumerate(ground_truth):
             if i in used_gt:
                 continue
-            area_diff = abs(det["area_m2"] - gt["area_m2"])
-            if area_diff < best_area_diff:
-                best_area_diff = area_diff
+
+            # GPS proximity check
+            if has_gps and "lat" in det:
+                dist = haversine_distance_meters(
+                    det["lat"], det["lng"], gt["lat"], gt["lng"]
+                )
+                if dist > match_radius_m:
+                    continue
+                # Score = distance + area difference (weighted)
+                area_diff = abs(det["area_m2"] - gt["area_m2"])
+                score = dist + area_diff * 10
+            else:
+                # Fallback: area-only matching
+                score = abs(det["area_m2"] - gt["area_m2"])
+
+            if score < best_score:
+                best_score = score
                 best_match = i
 
         if best_match is not None:
@@ -284,6 +321,7 @@ def main():
     parser = argparse.ArgumentParser(description="SIPAT Model Evaluation")
     parser.add_argument("--video", required=True, help="Path to test video")
     parser.add_argument("--ground-truth", required=True, help="Path to ground truth CSV")
+    parser.add_argument("--gps", default=None, help="Path to GPS CSV for spatial matching (optional)")
     parser.add_argument("--output", default="evaluation_results.csv", help="Output CSV path")
     parser.add_argument("--match-radius", type=float, default=5.0, help="Match radius in meters")
     args = parser.parse_args()
@@ -292,8 +330,33 @@ def main():
     gt = load_ground_truth(args.ground_truth)
     print(f"Loaded {len(gt)} ground truth samples")
 
+    # Load GPS if provided
+    gps_processor = None
+    if args.ground_truth:
+        gps_path = Path(args.ground_truth)
+        # Check for GPS CSV in same directory or use --gps flag
+        gps_file = args.ground_truth.replace(".csv", "_gps.csv")
+        if args.gps:
+            gps_file = args.gps
+        elif not Path(gps_file).exists():
+            gps_file = None
+        else:
+            gps_file = str(gps_file)
+
+        if gps_file and Path(gps_file).exists():
+            print(f"\nLoading GPS data from: {gps_file}")
+            import json
+            with open(gps_file, "r") as f:
+                gps_data = json.load(f)
+            gps_processor = GPSProcessor(gps_data)
+            if gps_processor.is_stationary():
+                print("Warning: GPS track is stationary, collapsing to median coordinate")
+                gps_data = gps_processor.collapse_to_median()
+                gps_processor = GPSProcessor(gps_data)
+            print(f"GPS loaded: {len(gps_data)} points")
+
     print("\nRunning YOLO + IPM detection...")
-    detections = run_detection(args.video)
+    detections = run_detection(args.video, gps_processor)
 
     print("\nMatching detections to ground truth...")
     matched = match_detections_to_ground_truth(detections, gt, args.match_radius)
