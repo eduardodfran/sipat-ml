@@ -6,6 +6,7 @@ CURRENT_DIR = Path(__file__).resolve().parent.parent
 # ---- YOLO model ----
 MODEL_PATH = CURRENT_DIR.parent / "weights" / "best.pt"
 YOLO_CONFIDENCE = 0.30
+COMMUNITY_PHOTO_YOLO_CONFIDENCE = float(os.getenv("SIPAT_COMMUNITY_PHOTO_YOLO_CONFIDENCE", "0.20"))
 _IOU_THRESHOLD = 0.7
 FRAME_SKIP = 5
 

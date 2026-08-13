@@ -9,7 +9,7 @@ import uuid
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from ...config.settings import MODEL_PATH, YOLO_CONFIDENCE
+from ...config.settings import MODEL_PATH, COMMUNITY_PHOTO_YOLO_CONFIDENCE, EXCLUDED_CLASSES
 from ...rate_limiter import UPLOAD_LIMIT, limiter
 from ...services.geocoder import reverse_geocode
 from ...services.supabase_client import get_supabase_service
@@ -37,7 +37,7 @@ def _run_yolo_on_image(image_path: str) -> dict:
             logger.warning("YOLO model not found at %s", MODEL_PATH)
             return {}
 
-        results = model(image_path, conf=YOLO_CONFIDENCE, verbose=False)
+        results = model(image_path, conf=COMMUNITY_PHOTO_YOLO_CONFIDENCE, verbose=False)
 
         if not results or len(results) == 0:
             return {}
@@ -46,16 +46,26 @@ def _run_yolo_on_image(image_path: str) -> dict:
         if r.boxes is None or len(r.boxes) == 0:
             return {}
 
-        best_idx = r.boxes.conf.argmax()
-        conf = float(r.boxes.conf[best_idx])
-        cls_id = int(r.boxes.cls[best_idx])
-        class_name = r.names.get(cls_id, f"class_{cls_id}")
+        best_detection = None
+        highest_conf = -1.0
 
-        return {
-            "confidence": conf,
-            "class_name": class_name,
-            "class_id": cls_id,
-        }
+        for i in range(len(r.boxes)):
+            conf = float(r.boxes.conf[i])
+            cls_id = int(r.boxes.cls[i])
+            class_name = r.names.get(cls_id, f"class_{cls_id}")
+
+            if class_name in EXCLUDED_CLASSES:
+                continue
+
+            if conf > highest_conf:
+                highest_conf = conf
+                best_detection = {
+                    "confidence": conf,
+                    "class_name": class_name,
+                    "class_id": cls_id,
+                }
+
+        return best_detection or {}
     except Exception as exc:
         logger.warning("YOLO inference failed: %s", exc)
         return {}
