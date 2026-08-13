@@ -165,6 +165,17 @@ class DetectionBatchBuilder:
                     if laplacian_var > BLUR_THRESHOLD * 2:
                         frame = _apply_clahe(frame)
 
+                    # --- IMU-assisted IPM pose: update yaw from heading ---
+                    if ipm is not None:
+                        try:
+                            _, _, _, heading = gps_processor.interpolate_sample(
+                                timestamp_seconds
+                            )
+                            if heading is not None:
+                                ipm.update_yaw(heading)
+                        except Exception:
+                            pass  # fall back to last known yaw
+
                     results = self.model(frame, conf=YOLO_CONFIDENCE, verbose=False)
 
                     processed_count = frame_count // FRAME_SKIP
@@ -257,7 +268,16 @@ class DetectionBatchBuilder:
                             phys_area_m2 = 0.0
                             try:
                                 severity = frame_area_pct_to_severity(bbox)
-                                phys_area_m2 = ipm.compute_phys_area(bbox)
+                                fwd_m = None
+                                if ipm is not None:
+                                    bc = DetectionBatchBuilder._bottom_center_point(
+                                        _box
+                                    )
+                                    if bc is not None:
+                                        _, fwd_m = ipm.pixel_to_offset(bc)
+                                phys_area_m2 = ipm.compute_phys_area(
+                                    bbox, forward_distance_m=fwd_m
+                                )
                             except Exception as e:
                                 logger.debug("severity/IPM error for bbox %s: %s", bbox, e)
                                 pass

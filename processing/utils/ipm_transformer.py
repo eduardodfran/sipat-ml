@@ -12,6 +12,7 @@ DEFAULT_NEAR_METERS = 3.0
 DEFAULT_FAR_METERS = 25.0
 DEFAULT_ROAD_WIDTH_METERS = 6.0
 DEFAULT_PIXELS_PER_METER = 100.0
+DISTANCE_CORRECTION_ALPHA = 0.15
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,14 @@ class IPMTransformer:
         road_width_meters: float = DEFAULT_ROAD_WIDTH_METERS,
         pixels_per_meter: float = DEFAULT_PIXELS_PER_METER,
     ) -> None:
+        self._frame_width = frame_width
+        self._frame_height = frame_height
+        self._calibration = calibration
+        self._near_meters = near_meters
+        self._far_meters = far_meters
+        self._road_width_meters = road_width_meters
+        self._pixels_per_meter = pixels_per_meter
+        self._current_yaw = calibration.yaw_deg if calibration else 0.0
         self.context = self._build_context(
             frame_width,
             frame_height,
@@ -44,6 +53,45 @@ class IPMTransformer:
             road_width_meters,
             pixels_per_meter,
         )
+
+    @property
+    def current_yaw(self) -> float:
+        return self._current_yaw
+
+    def update_yaw(self, yaw_deg: float, tolerance: float = 0.5) -> bool:
+        """Update the camera yaw (heading) from IMU/GPS and recompute the perspective matrix.
+
+        This aligns the IPM transform with the vehicle's actual orientation per frame,
+        correcting perspective distortion when the phone or vehicle is not facing
+        exactly forward. Only recomputes when yaw changes beyond *tolerance* degrees.
+
+        Returns True if the matrix was updated, False if unchanged within tolerance.
+        """
+        if self._calibration is None:
+            return False
+        if abs(yaw_deg - self._current_yaw) < tolerance:
+            return False
+        self._current_yaw = yaw_deg
+        updated_cal = CameraCalibration(
+            fx=self._calibration.fx,
+            fy=self._calibration.fy,
+            cx=self._calibration.cx,
+            cy=self._calibration.cy,
+            height_m=self._calibration.height_m,
+            pitch_deg=self._calibration.pitch_deg,
+            roll_deg=self._calibration.roll_deg,
+            yaw_deg=yaw_deg,
+        )
+        self.context = self._build_context(
+            self._frame_width,
+            self._frame_height,
+            updated_cal,
+            self._near_meters,
+            self._far_meters,
+            self._road_width_meters,
+            self._pixels_per_meter,
+        )
+        return True
 
     @staticmethod
     def _calibrated_roi_points(
@@ -193,7 +241,40 @@ class IPMTransformer:
             (ctx.output_width_px, ctx.output_height_px),
         )
 
-    def compute_phys_area(self, bbox_normalized: list[float]) -> float:
+    def _distance_correction(self, forward_distance_m: float) -> float:
+        """Distance-based correction factor for perspective foreshortening.
+
+        At far distances the IPM linear approximation underestimates physical
+        area because the true perspective projection compresses the y-axis
+        more than the linear model accounts for.  Returns a multiplier >= 1.0
+        that increases with distance from the camera.
+        """
+        if forward_distance_m <= self._near_meters:
+            return 1.0
+        t = min(
+            1.0,
+            (forward_distance_m - self._near_meters)
+            / (self._far_meters - self._near_meters),
+        )
+        return 1.0 + DISTANCE_CORRECTION_ALPHA * t
+
+    def compute_phys_area(
+        self,
+        bbox_normalized: list[float],
+        forward_distance_m: float | None = None,
+    ) -> float:
+        """Compute physical area (m²) of a normalised bounding box via IPM.
+
+        Parameters
+        ----------
+        bbox_normalized:
+            ``[x1, y1, x2, y2]`` in normalised 0-1 image coordinates.
+        forward_distance_m:
+            Optional forward distance (metres) from camera to the detection,
+            obtained from :meth:`pixel_to_offset`.  When provided the raw
+            BEV area is multiplied by a distance-dependent correction factor
+            that compensates for perspective foreshortening at far range.
+        """
         ctx = self.context
         x1, y1, x2, y2 = bbox_normalized
         corners = np.array(
@@ -210,4 +291,7 @@ class IPMTransformer:
         bev_corners = cv2.perspectiveTransform(corners, ctx.matrix)[0]
         bev_w = max(0.0, float(np.max(bev_corners[:, 0]) - np.min(bev_corners[:, 0])))
         bev_h = max(0.0, float(np.max(bev_corners[:, 1]) - np.min(bev_corners[:, 1])))
-        return float((bev_w / ctx.pixels_per_meter) * (bev_h / ctx.pixels_per_meter))
+        area = float((bev_w / ctx.pixels_per_meter) * (bev_h / ctx.pixels_per_meter))
+        if forward_distance_m is not None:
+            area *= self._distance_correction(forward_distance_m)
+        return area
