@@ -291,7 +291,8 @@ class RideProcessor:
                 continue
 
             new_hits = int(pothole.get("detection_count") or 0)
-            ipm_sev = area_to_severity(pothole.get("max_area_m2"))
+            area_for_sev = pothole.get("median_area_m2") or pothole.get("max_area_m2")
+            ipm_sev = area_to_severity(area_for_sev)
             frame_sev = pothole.get("max_frame_severity", "Minor")
             conf = pothole.get("avg_confidence", 0.0)
             final_sev = fuse_severity(ipm_sev, frame_sev, conf)
@@ -311,7 +312,7 @@ class RideProcessor:
                     pothole.get("user_detections") or [],
                 )
                 new_total_hits = current_hits + new_hits
-                existing_area = match.get("max_area_m2") or pothole.get("max_area_m2")
+                existing_area = match.get("median_area_m2") or pothole.get("median_area_m2") or pothole.get("max_area_m2")
                 new_caption = self._generate_caption(merged_sev, new_total_hits, existing_area)
                 client.schema("public").from_("verified_potholes").update({
                     "total_detection_hits": new_total_hits,
@@ -324,7 +325,7 @@ class RideProcessor:
                 match["worst_severity"] = merged_sev
                 match["user_detections"] = merged_users
             else:
-                area_m2 = pothole.get("max_area_m2")
+                area_m2 = pothole.get("median_area_m2") or pothole.get("max_area_m2")
                 caption = self._generate_caption(final_sev, new_hits, area_m2)
                 result = client.schema("public").from_("verified_potholes").insert({
                     "ride_id": ride_id,

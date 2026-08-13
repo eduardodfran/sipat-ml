@@ -9,6 +9,7 @@ from processing.core.clusterer import (
     _first_image_url,
     _max_frame_severity,
     _max_phys_area,
+    _median_phys_area,
 )
 
 
@@ -98,6 +99,26 @@ class TestPotholeClustererCluster:
         ]
         result = c.cluster(data)
         assert result[0]["max_area_m2"] == 5.0
+
+    def test_cluster_median_area_is_median(self):
+        c = PotholeClusterer(max_distance_meters=5.0, min_detections=3)
+        data = [
+            _make_detection(14.55480, 121.04810, phys_area_m2=1.0),
+            _make_detection(14.55481, 121.04811, phys_area_m2=5.0),
+            _make_detection(14.55482, 121.04812, phys_area_m2=2.0),
+        ]
+        result = c.cluster(data)
+        assert result[0]["median_area_m2"] == pytest.approx(2.0)
+
+    def test_cluster_has_median_area_key(self):
+        c = PotholeClusterer(max_distance_meters=5.0, min_detections=3)
+        data = [
+            _make_detection(14.55480, 121.04810),
+            _make_detection(14.55481, 121.04811),
+            _make_detection(14.55482, 121.04812),
+        ]
+        result = c.cluster(data)
+        assert "median_area_m2" in result[0]
 
     def test_cluster_worst_severity(self):
         c = PotholeClusterer(max_distance_meters=5.0, min_detections=3)
@@ -238,6 +259,43 @@ class TestMaxPhysArea:
         import pandas as pd
         df = pd.DataFrame({"other": [1]})
         assert _max_phys_area(df) == 0.0
+
+
+class TestMedianPhysArea:
+    def test_without_ride_id(self):
+        import pandas as pd
+        df = pd.DataFrame({"phys_area_m2": [1.0, 5.0, 2.0]})
+        assert _median_phys_area(df) == pytest.approx(2.0)
+
+    def test_with_ride_id_grouping(self):
+        import pandas as pd
+        df = pd.DataFrame({
+            "phys_area_m2": [1.0, 5.0, 2.0, 8.0],
+            "ride_id": ["a", "a", "b", "b"],
+        })
+        # per-ride medians: a->3.0, b->5.0; overall median of [3.0, 5.0] = 4.0
+        assert _median_phys_area(df) == pytest.approx(4.0)
+
+    def test_without_phys_area_column(self):
+        import pandas as pd
+        df = pd.DataFrame({"other": [1]})
+        assert _median_phys_area(df) == 0.0
+
+    def test_all_zero_areas_returns_zero(self):
+        import pandas as pd
+        df = pd.DataFrame({"phys_area_m2": [0.0, 0.0, 0.0]})
+        assert _median_phys_area(df) == 0.0
+
+    def test_single_value(self):
+        import pandas as pd
+        df = pd.DataFrame({"phys_area_m2": [3.14]})
+        assert _median_phys_area(df) == pytest.approx(3.14)
+
+    def test_ignores_zero_areas_in_median(self):
+        import pandas as pd
+        df = pd.DataFrame({"phys_area_m2": [0.0, 0.0, 2.0, 4.0]})
+        # zeros filtered out, median of [2.0, 4.0] = 3.0
+        assert _median_phys_area(df) == pytest.approx(3.0)
 
 
 class TestAvgConfidence:

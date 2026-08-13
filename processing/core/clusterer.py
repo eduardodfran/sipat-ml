@@ -50,6 +50,7 @@ class PotholeClusterer:
             "detection_count": len(subset),
             "image_url": _first_image_url(subset),
             "max_area_m2": _max_phys_area(subset),
+            "median_area_m2": _median_phys_area(subset),
             "max_frame_severity": _max_frame_severity(subset),
             "avg_confidence": _avg_confidence(subset),
             "user_detections": _aggregate_user_detections(subset),
@@ -74,6 +75,23 @@ def _max_phys_area(subset: pd.DataFrame) -> float:
         return float(subset["phys_area_m2"].max())
     per_ride_max = subset.groupby("ride_id")["phys_area_m2"].max()
     return float(per_ride_max.max())
+
+
+def _median_phys_area(subset: pd.DataFrame) -> float:
+    """Per-ride MEDIAN phys_area_m2, then MEDIAN across rides.
+
+    More robust than max to single-frame IPM outliers.  Falls back to
+    0.0 when the column is missing or empty.
+    """
+    if "phys_area_m2" not in subset.columns:
+        return 0.0
+    valid = subset["phys_area_m2"][subset["phys_area_m2"] > 0]
+    if valid.empty:
+        return 0.0
+    if "ride_id" not in subset.columns:
+        return float(valid.median())
+    per_ride_median = valid.groupby(subset.loc[valid.index, "ride_id"]).median()
+    return float(per_ride_median.median()) if not per_ride_median.empty else 0.0
 
 
 def _max_frame_severity(subset: pd.DataFrame) -> str:
