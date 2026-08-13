@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Uploa
 from fastapi.concurrency import run_in_threadpool
 
 from ...config.settings import MODEL_PATH, COMMUNITY_PHOTO_YOLO_CONFIDENCE, EXCLUDED_CLASSES
+from ...core.severity import frame_area_pct_to_severity
 from ...rate_limiter import UPLOAD_LIMIT, limiter
 from ...services.geocoder import reverse_geocode
 from ...services.supabase_client import get_supabase_service
@@ -63,20 +64,13 @@ def _run_yolo_on_image(image_path: str) -> dict:
                     "confidence": conf,
                     "class_name": class_name,
                     "class_id": cls_id,
+                    "bbox": r.boxes[i].xyxyn[0].tolist(),
                 }
 
         return best_detection or {}
     except Exception as exc:
         logger.warning("YOLO inference failed: %s", exc)
         return {}
-
-
-def _classify_severity(confidence: float) -> str:
-    if confidence >= 0.7:
-        return "Severe"
-    elif confidence >= 0.4:
-        return "Moderate"
-    return "Minor"
 
 
 @router.post("/community-photo/upload")
@@ -172,11 +166,17 @@ async def upload_community_photo(
         detection = await run_in_threadpool(_run_yolo_on_image, tmp_path)
 
         if detection:
+            severity = "Minor"
+            try:
+                severity = frame_area_pct_to_severity(detection.get("bbox", [0, 0, 0.1, 0.1]))
+            except Exception:
+                pass
+
             svc.update(
                 "community_photos",
                 {
                     "detection_status": "processed",
-                    "worst_severity": _classify_severity(detection.get("confidence", 0)),
+                    "worst_severity": severity,
                     "confidence": detection["confidence"],
                     "class_name": detection["class_name"],
                 },
