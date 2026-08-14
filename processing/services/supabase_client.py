@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log, retry_if_not_exception_type
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
@@ -19,11 +19,17 @@ from ..config.settings import SUPABASE_POOL_SIZE
 
 logger = logging.getLogger(__name__)
 
+
+class PGRST204Error(Exception):
+    """Column not found in table — not a transient error, should not be retried."""
+
+
 _retry_strategy = retry(
     reraise=True,
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     before_sleep=before_sleep_log(logger, logging.WARNING),
+    retry=retry_if_not_exception_type(PGRST204Error),
 )
 
 load_dotenv()
@@ -175,9 +181,14 @@ class SupabaseService:
 
     @_retry_strategy
     def insert(self, table: str, data: dict | list[dict]) -> Any:
-        return self._execute_with_circuit(
-            lambda: self.client.table(table).insert(data).execute()
-        )
+        try:
+            return self._execute_with_circuit(
+                lambda: self.client.table(table).insert(data).execute()
+            )
+        except Exception as exc:
+            if "PGRST204" in str(exc):
+                raise PGRST204Error(str(exc)) from exc
+            raise
 
     @_retry_strategy
     def update(self, table: str, data: dict, **filters) -> Any:

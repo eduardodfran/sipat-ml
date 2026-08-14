@@ -13,10 +13,18 @@ from ...config.settings import MODEL_PATH, COMMUNITY_PHOTO_YOLO_CONFIDENCE, EXCL
 from ...core.severity import frame_area_pct_to_severity
 from ...rate_limiter import UPLOAD_LIMIT, limiter
 from ...services.geocoder import reverse_geocode
-from ...services.supabase_client import get_supabase_service
+from ...services.supabase_client import get_supabase_service, PGRST204Error
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["community-photo"])
+
+COMMUNITY_PHOTO_COLUMNS = {
+    "id", "user_id", "image_url", "latitude", "longitude",
+    "street", "barangay", "city", "province", "region", "country",
+    "formatted_address", "address_geocoded_at", "detection_status",
+    "worst_severity", "confidence", "class_name", "caption",
+    "created_at", "updated_at",
+}
 
 _shared_model = None
 
@@ -140,21 +148,25 @@ async def upload_community_photo(
         "detection_status": "pending",
     }
 
-    try:
-        result = svc.insert("community_photos", photo_data)
-        photo_id = result.data[0]["id"]
-    except Exception as exc:
-        err_str = str(exc)
-        if "PGRST204" in err_str and "caption" in err_str:
-            logger.warning("caption column missing, retrying without it")
-            photo_data.pop("caption", None)
-            try:
-                result = svc.insert("community_photos", photo_data)
-                photo_id = result.data[0]["id"]
-            except Exception as exc2:
-                logger.error("DB insert failed (no caption): %s", exc2)
-                raise HTTPException(500, "Failed to save photo record")
-        else:
+    photo_data = {k: v for k, v in photo_data.items() if k in COMMUNITY_PHOTO_COLUMNS}
+
+    import re
+    max_insert_retries = 5
+    for attempt in range(max_insert_retries):
+        try:
+            result = svc.insert("community_photos", photo_data)
+            photo_id = result.data[0]["id"]
+            break
+        except PGRST204Error as exc:
+            missing_cols = re.findall(r"Could not find the '(\w+)' column", str(exc))
+            for col in missing_cols:
+                logger.warning("column %s missing from community_photos, stripping it", col)
+                photo_data.pop(col, None)
+            if attempt < max_insert_retries - 1:
+                continue
+            logger.error("DB insert failed after %d retries: %s", max_insert_retries, exc)
+            raise HTTPException(500, "Failed to save photo record")
+        except Exception as exc:
             logger.error("DB insert failed: %s", exc)
             raise HTTPException(500, "Failed to save photo record")
 
