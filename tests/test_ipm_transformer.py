@@ -15,7 +15,11 @@ try:
 except ImportError:
     sys.modules["cv2"] = MagicMock()
 
-from processing.utils.camera_calibration import CameraCalibration
+from processing.utils.camera_calibration import (
+    CameraCalibration,
+    DEFAULT_CALIBRATION_HEIGHT,
+    DEFAULT_CALIBRATION_WIDTH,
+)
 from processing.utils.ipm_transformer import (
     DEFAULT_FAR_METERS,
     DEFAULT_NEAR_METERS,
@@ -68,6 +72,81 @@ class TestIPMTransformerInit:
         ipm = IPMTransformer(1920, 1080, calibration=cal)
         assert ipm._calibration.pitch_deg == 10.0
         assert ipm._calibration.height_m == 2.0
+
+
+# ---- camera calibration resolution / zoom scaling ----
+
+
+class TestCameraCalibrationScaledToResolution:
+    def test_identity_scale_1080p_returns_same_values(self):
+        cal = _default_calibration()
+        scaled = cal.scaled_to_resolution(
+            width_px=DEFAULT_CALIBRATION_WIDTH,
+            height_px=DEFAULT_CALIBRATION_HEIGHT,
+        )
+        assert scaled.fx == pytest.approx(1200.0)
+        assert scaled.fy == pytest.approx(1200.0)
+        assert scaled.cx == pytest.approx(960.0)
+        assert scaled.cy == pytest.approx(540.0)
+
+    def test_720p_scales_intrinsics_by_2_3(self):
+        # 720p is (2/3) of 1080p → fx, fy, cx, cy all multiply by 2/3
+        cal = _default_calibration()
+        scaled = cal.scaled_to_resolution(width_px=1280, height_px=720)
+        assert scaled.fx == pytest.approx(1200.0 * (1280 / 1920))
+        assert scaled.fy == pytest.approx(1200.0 * (720 / 1080))
+        assert scaled.cx == pytest.approx(960.0 * (1280 / 1920))
+        assert scaled.cy == pytest.approx(540.0 * (720 / 1080))
+
+    def test_zoom_factor_doubles_focal_lengths_not_principal_point(self):
+        cal = _default_calibration()
+        scaled = cal.scaled_to_resolution(
+            width_px=DEFAULT_CALIBRATION_WIDTH,
+            height_px=DEFAULT_CALIBRATION_HEIGHT,
+            zoom_factor=2.0,
+        )
+        assert scaled.fx == pytest.approx(2400.0)
+        assert scaled.fy == pytest.approx(2400.0)
+        assert scaled.cx == pytest.approx(960.0)  # principal point is NOT zoomed
+        assert scaled.cy == pytest.approx(540.0)
+
+    def test_invalid_resolution_returns_self_unchanged(self):
+        cal = _default_calibration()
+        assert cal.scaled_to_resolution(0, 0) is cal
+        assert cal.scaled_to_resolution(-1, 720) is cal
+
+    def test_720p_times_2x_zoom_equals_1080p_zoom(self):
+        # 720p at 2x zoom should give same fx/fy as 1080p at (2 * 2/3)x zoom
+        cal = _default_calibration()
+        hd2x = cal.scaled_to_resolution(1280, 720, zoom_factor=2.0)
+        fhd = cal.scaled_to_resolution(
+            1920, 1080, zoom_factor=2.0 * (1280 / 1920)
+        )
+        assert hd2x.fx == pytest.approx(fhd.fx, rel=1e-6)
+        assert hd2x.fy == pytest.approx(fhd.fy, rel=1e-6)
+
+    def test_extrinsics_unchanged(self):
+        cal = _default_calibration(height_m=1.5, pitch_deg=8.0, roll_deg=1.0, yaw_deg=5.0)
+        scaled = cal.scaled_to_resolution(1280, 720, zoom_factor=1.5)
+        assert scaled.height_m == pytest.approx(1.5)
+        assert scaled.pitch_deg == pytest.approx(8.0)
+        assert scaled.roll_deg == pytest.approx(1.0)
+        assert scaled.yaw_deg == pytest.approx(5.0)
+
+    def test_custom_base_resolution(self):
+        cal = CameraCalibration(
+            fx=600.0, fy=600.0, cx=320.0, cy=240.0,
+            height_m=1.3, pitch_deg=6.0,
+        )
+        # Author at 640x480, then scale to 1280x960 → 2×
+        scaled = cal.scaled_to_resolution(
+            width_px=1280, height_px=960,
+            base_width_px=640, base_height_px=480,
+        )
+        assert scaled.fx == pytest.approx(1200.0)
+        assert scaled.fy == pytest.approx(1200.0)
+        assert scaled.cx == pytest.approx(640.0)
+        assert scaled.cy == pytest.approx(480.0)
 
 
 # ---- update_yaw (logic-only tests, no real cv2 needed) ----

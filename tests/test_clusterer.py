@@ -22,7 +22,7 @@ def _make_detection(lat: float, lng: float, **overrides) -> dict:
 class TestPotholeClustererInit:
     def test_default_params(self):
         c = PotholeClusterer()
-        assert c.max_distance_meters == 15.0
+        assert c.max_distance_meters == 10.0
         assert c.min_detections == 3
 
     def test_custom_params(self):

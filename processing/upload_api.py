@@ -41,6 +41,10 @@ class CompleteUploadRequest(BaseModel):
     gps_path: str
     latitude: float | None = None
     longitude: float | None = None
+    video_width: int | None = None
+    video_height: int | None = None
+    focal_length_35mm: float | None = None
+    zoom_factor: float | None = 1.0
 
 
 class AbortUploadRequest(BaseModel):
@@ -128,16 +132,33 @@ async def complete_upload(
         if not (-180 <= body.longitude <= 180):
             raise HTTPException(status_code=400, detail="Invalid longitude: must be between -180 and 180")
 
-    supabase.insert(
-        "rides_metadata",
-        {
-            "id": body.ride_id,
-            "user_id": user_id,
-            "video_bucket_path": body.video_path,
-            "gps_bucket_path": body.gps_path,
-            "status": "queued",
-        },
-    )
+    if body.video_width is not None and body.video_width <= 0:
+        raise HTTPException(status_code=400, detail="Invalid video_width: must be > 0")
+    if body.video_height is not None and body.video_height <= 0:
+        raise HTTPException(status_code=400, detail="Invalid video_height: must be > 0")
+    if body.zoom_factor is not None and body.zoom_factor <= 0:
+        raise HTTPException(status_code=400, detail="Invalid zoom_factor: must be > 0")
+
+    row = {
+        "id": body.ride_id,
+        "user_id": user_id,
+        "video_bucket_path": body.video_path,
+        "gps_bucket_path": body.gps_path,
+        "status": "queued",
+    }
+    if body.latitude is not None and body.longitude is not None:
+        row["latitude"] = body.latitude
+        row["longitude"] = body.longitude
+    if body.video_width is not None:
+        row["video_width"] = int(body.video_width)
+    if body.video_height is not None:
+        row["video_height"] = int(body.video_height)
+    if body.focal_length_35mm is not None:
+        row["focal_length_35mm"] = float(body.focal_length_35mm)
+    if body.zoom_factor is not None:
+        row["zoom_factor"] = float(body.zoom_factor)
+
+    supabase.insert("rides_metadata", row)
 
     return {"status": "ok", "ride_id": body.ride_id}
 

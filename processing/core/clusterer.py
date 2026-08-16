@@ -53,6 +53,7 @@ class PotholeClusterer:
             "median_area_m2": _median_phys_area(subset),
             "max_frame_severity": _max_frame_severity(subset),
             "avg_confidence": _avg_confidence(subset),
+            "median_forward_distance_m": _median_forward_distance(subset),
             "user_detections": _aggregate_user_detections(subset),
         }
 
@@ -65,6 +66,23 @@ def _first_image_url(subset: pd.DataFrame) -> str | None:
         return None
     non_null = subset["image_url"].dropna()
     return str(non_null.iloc[0]) if len(non_null) > 0 else None
+
+
+def _median_forward_distance(subset: pd.DataFrame) -> float | None:
+    """Median forward viewing distance (metres) for the cluster.
+
+    Used by the worker to distance-normalise frame-area severity when
+    IPM is unavailable on a given detection.
+    """
+    if "forward_distance_m" not in subset.columns:
+        return None
+    valid = subset["forward_distance_m"].dropna()
+    if valid.empty:
+        return None
+    value = float(valid.median())
+    if value <= 0:
+        return None
+    return value
 
 
 def _max_phys_area(subset: pd.DataFrame) -> float:

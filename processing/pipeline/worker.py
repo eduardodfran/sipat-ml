@@ -408,6 +408,17 @@ class RideProcessor:
             self._update_progress(ride_id, 25, "detecting", "Running YOLO detection...")
             logger.info("[%s]   3/5 Running YOLO detection...", ride_id[:8])
             gps_processor = GPSProcessor.from_json_file(gps_local)
+
+            zoom_factor = 1.0
+            try:
+                raw_zf = ride.get("zoom_factor")
+                if raw_zf is not None:
+                    zoom_factor = max(0.01, float(raw_zf))
+                    logger.info("[%s]   Using zoom_factor=%.3fx from ride metadata",
+                                ride_id[:8], zoom_factor)
+            except (TypeError, ValueError):
+                zoom_factor = 1.0
+
             builder = DetectionBatchBuilder(
                 ride_id=ride_id,
                 user_id=str(user_id) if user_id is not None else None,
@@ -415,6 +426,7 @@ class RideProcessor:
                 model=self.model,
                 supabase_url=self._svc.url,
                 progress_callback=lambda pct, stage, msg: self._update_progress(ride_id, pct, stage, msg),
+                zoom_factor=zoom_factor,
             )
             raw_batch = builder.build(video_local, gps_processor)
 

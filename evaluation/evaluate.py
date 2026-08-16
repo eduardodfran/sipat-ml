@@ -60,9 +60,15 @@ def load_ground_truth(csv_path: str) -> list[dict]:
     return gt
 
 
-def run_detection(video_path: str, gps_processor: GPSProcessor | None = None) -> list[dict]:
+def run_detection(video_path: str, gps_processor: GPSProcessor | None = None,
+                  zoom_factor: float = 1.0) -> list[dict]:
     """Run YOLO + IPM detection on a video, return all detections with physical area and GPS."""
     from ultralytics import YOLO
+    from processing.utils.camera_calibration import (
+        CameraCalibration,
+        DEFAULT_CALIBRATION_HEIGHT,
+        DEFAULT_CALIBRATION_WIDTH,
+    )
 
     model = YOLO(str(MODEL_PATH))
     calibration = load_calibration()
@@ -78,7 +84,7 @@ def run_detection(video_path: str, gps_processor: GPSProcessor | None = None) ->
     frame_count = 0
     detections = []
 
-    print(f"Video: {total_frames} frames, {fps:.1f} FPS, processing every {FRAME_SKIP}th frame")
+    print(f"Video: {total_frames} frames, {fps:.1f} FPS, processing every {FRAME_SKIP}th frame, zoom={zoom_factor:.2f}x")
 
     while capture.isOpened():
         success, frame = capture.read()
@@ -96,17 +102,28 @@ def run_detection(video_path: str, gps_processor: GPSProcessor | None = None) ->
             frame = frame[crop_y:]
 
         if ipm is None:
-            cal = calibration
+            unscaled = calibration
             if h > w:
-                from processing.utils.camera_calibration import CameraCalibration
-                cal = CameraCalibration(
-                    fx=cal.fx, fy=cal.fy,
-                    cx=cal.cy, cy=cal.cx - crop_y,
-                    height_m=cal.height_m,
-                    pitch_deg=cal.pitch_deg,
-                    roll_deg=cal.roll_deg,
-                    yaw_deg=cal.yaw_deg,
+                unscaled = CameraCalibration(
+                    fx=calibration.fx, fy=calibration.fy,
+                    cx=calibration.cy, cy=calibration.cx - crop_y,
+                    height_m=calibration.height_m,
+                    pitch_deg=calibration.pitch_deg,
+                    roll_deg=calibration.roll_deg,
+                    yaw_deg=calibration.yaw_deg,
                 )
+            actual_w = int(w)
+            actual_h = int((h - crop_y) if crop_y else h)
+            base_w = DEFAULT_CALIBRATION_WIDTH if h <= w else DEFAULT_CALIBRATION_HEIGHT
+            base_h = (DEFAULT_CALIBRATION_HEIGHT - int(DEFAULT_CALIBRATION_HEIGHT * CROP_TOP_RATIO)) if (h > w and CROP_TOP_RATIO > 0) else DEFAULT_CALIBRATION_HEIGHT
+            cal = unscaled.scaled_to_resolution(
+                width_px=actual_w,
+                height_px=actual_h,
+                base_width_px=base_w,
+                base_height_px=base_h,
+                zoom_factor=zoom_factor,
+            )
+            print(f"Evaluation calibration: video={actual_w}x{actual_h} → fx={cal.fx:.1f} fy={cal.fy:.1f}")
             ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=cal)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)

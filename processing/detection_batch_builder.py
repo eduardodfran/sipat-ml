@@ -22,7 +22,12 @@ from .config.settings import (
     _IOU_THRESHOLD,
 )
 from .core.severity import frame_area_pct_to_severity
-from .utils.camera_calibration import CameraCalibration, load_calibration
+from .utils.camera_calibration import (
+    CameraCalibration,
+    DEFAULT_CALIBRATION_HEIGHT,
+    DEFAULT_CALIBRATION_WIDTH,
+    load_calibration,
+)
 from .utils.gps_processor import GPSProcessor
 from .utils.ipm_transformer import IPMTransformer
 
@@ -67,6 +72,7 @@ class DetectionBatchBuilder:
         model: YOLO,
         supabase_url: str,
         progress_callback: callable | None = None,
+        zoom_factor: float = 1.0,
     ) -> None:
         self.ride_id = ride_id
         self.user_id = user_id
@@ -74,6 +80,7 @@ class DetectionBatchBuilder:
         self.model = model
         self.supabase_url = supabase_url
         self._progress_callback = progress_callback
+        self._zoom_factor = max(0.01, float(zoom_factor or 1.0))
 
     def build(
         self, video_path: Path, gps_processor: GPSProcessor
@@ -135,17 +142,36 @@ class DetectionBatchBuilder:
                         frame = frame[crop_y:]
 
                     if ipm is None:
-                        cal = _CALIBRATION
+                        base_cal = _CALIBRATION
+                        unscaled_cal = base_cal
                         if h > w:
-                            cal = CameraCalibration(
-                                fx=cal.fx, fy=cal.fy,
-                                cx=cal.cy,
-                                cy=cal.cx - crop_y,
-                                height_m=cal.height_m,
-                                pitch_deg=cal.pitch_deg,
-                                roll_deg=cal.roll_deg,
-                                yaw_deg=cal.yaw_deg,
+                            unscaled_cal = CameraCalibration(
+                                fx=base_cal.fx, fy=base_cal.fy,
+                                cx=base_cal.cy,
+                                cy=base_cal.cx - crop_y,
+                                height_m=base_cal.height_m,
+                                pitch_deg=base_cal.pitch_deg,
+                                roll_deg=base_cal.roll_deg,
+                                yaw_deg=base_cal.yaw_deg,
                             )
+                        actual_w = int(w if h <= w else w)
+                        actual_h = int((h - crop_y) if crop_y else h)
+                        # Crop changes the base height we calibrate against.
+                        base_w = DEFAULT_CALIBRATION_WIDTH if h <= w else DEFAULT_CALIBRATION_HEIGHT
+                        base_h = (DEFAULT_CALIBRATION_HEIGHT - int(DEFAULT_CALIBRATION_HEIGHT * CROP_TOP_RATIO)) if (h > w and CROP_TOP_RATIO > 0) else DEFAULT_CALIBRATION_HEIGHT
+                        cal = unscaled_cal.scaled_to_resolution(
+                            width_px=actual_w,
+                            height_px=actual_h,
+                            base_width_px=base_w,
+                            base_height_px=base_h,
+                            zoom_factor=self._zoom_factor,
+                        )
+                        logger.info(
+                            "Scaled camera calibration: video=%dx%d, crop_y=%d, "
+                            "zoom=%.2fx → fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                            actual_w, actual_h, crop_y, self._zoom_factor,
+                            cal.fx, cal.fy, cal.cx, cal.cy,
+                        )
                         ipm = IPMTransformer(frame.shape[1], frame.shape[0], calibration=cal)
 
                     # --- frame quality gate: skip blurry / dark frames ---
@@ -266,15 +292,15 @@ class DetectionBatchBuilder:
 
                             severity = "Minor"
                             phys_area_m2 = 0.0
+                            fwd_m = None
                             try:
-                                severity = frame_area_pct_to_severity(bbox)
-                                fwd_m = None
                                 if ipm is not None:
                                     bc = DetectionBatchBuilder._bottom_center_point(
                                         _box
                                     )
                                     if bc is not None:
                                         _, fwd_m = ipm.pixel_to_offset(bc)
+                                severity = frame_area_pct_to_severity(bbox, forward_distance_m=fwd_m)
                                 phys_area_m2 = ipm.compute_phys_area(
                                     bbox, forward_distance_m=fwd_m
                                 )
@@ -323,6 +349,7 @@ class DetectionBatchBuilder:
                                     "bbox_y2": bbox[3],
                                     "class_id": class_id,
                                     "class_name": class_name,
+                                    "forward_distance_m": float(fwd_m) if fwd_m is not None else None,
                                 }
                             )
 
