@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 import uuid
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -169,6 +170,17 @@ async def upload_community_photo(
         except Exception as exc:
             logger.error("DB insert failed: %s", exc)
             raise HTTPException(500, "Failed to save photo record")
+
+    # Auto-expire old stuck pending posts (>1 hour) so they don't show forever
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        svc.client.table("community_photos") \
+            .update({"detection_status": "no_detection"}) \
+            .eq("detection_status", "pending") \
+            .lt("created_at", cutoff) \
+            .execute()
+    except Exception as exc:
+        logger.warning("Stale pending cleanup failed (non-critical): %s", exc)
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         tmp.write(image_bytes)
