@@ -42,7 +42,7 @@ SEVERITY_MINOR_AREA_M2 = 0.03
 SEVERITY_MODERATE_AREA_M2 = 0.17
 
 # ---- confidence-based severity capping ----
-CONFIDENCE_MODERATE_CAP = 0.35
+CONFIDENCE_MODERATE_CAP = 0.25
 CONFIDENCE_SEVERE_CAP = 0.50
 
 # ---- IPM defaults ----
