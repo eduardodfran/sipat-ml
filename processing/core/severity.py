@@ -5,13 +5,13 @@ from ..config.settings import (
     CONFIDENCE_SEVERE_CAP,
     SEVERITY_MINOR_AREA_M2,
     SEVERITY_MODERATE_AREA_M2,
+    FRAME_SEVERITY_MINOR_PCT,
+    FRAME_SEVERITY_SEVERE_PCT,
 )
 
 _SEVERITY_ORDER: dict[str, int] = {"Minor": 0, "Moderate": 1, "Severe": 2}
 
 REFERENCE_DISTANCE_M = 10.0
-FRAME_SEVERITY_MINOR_PCT = 2.0
-FRAME_SEVERITY_SEVERE_PCT = 6.0
 IPM_SEVERITY_WEIGHT = 0.70
 
 
@@ -29,7 +29,10 @@ def _severity_from_value(value: float) -> str:
 
 
 def area_to_severity(area_m2: float | None) -> str:
-    """Map IPM physical area (m²) to DPWH-aligned severity."""
+    """Map IPM physical area (m²) to DPWH-aligned severity.
+
+    Boundaries are lower-inclusive: >= 0.03 m² -> Moderate, >= 0.17 m² -> Severe.
+    """
     if area_m2 is None or area_m2 < SEVERITY_MINOR_AREA_M2:
         return "Minor"
     if area_m2 < SEVERITY_MODERATE_AREA_M2:
@@ -73,6 +76,8 @@ def fuse_severity(
     viewing geometry, so it carries more weight.  Confidence caps are
     preserved to avoid overrating uncertain detections.
     """
+    if avg_confidence is None:
+        avg_confidence = 0.0
     w = max(0.0, min(1.0, ipm_weight))
     blended = (
         w * severity_value(ipm_severity)

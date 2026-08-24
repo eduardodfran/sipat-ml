@@ -305,7 +305,7 @@ class DetectionBatchBuilder:
                                     bbox, forward_distance_m=fwd_m
                                 )
                             except Exception as e:
-                                logger.debug("severity/IPM error for bbox %s: %s", bbox, e)
+                                logger.warning("IPM failed for bbox %s, falling back to frame-only severity: %s", bbox, e)
                                 pass
 
                             lat, lng = self._get_detection_coords(

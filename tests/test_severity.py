@@ -135,6 +135,10 @@ class TestFuseSeverity:
         # ipm_weight=-0.5 is clamped to 0.0 → frame-only
         assert fuse_severity("Minor", "Severe", 0.9, ipm_weight=-0.5) == "Severe"
 
+    def test_none_confidence_defaults_to_minor(self):
+        """None confidence should not raise; treated as 0.0 → forces Minor"""
+        assert fuse_severity("Severe", "Severe", None) == "Minor"
+
 
 class TestDistanceAwareFrameSeverity:
     def test_no_distance_uses_baseline_thresholds(self):

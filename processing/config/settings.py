@@ -45,6 +45,10 @@ SEVERITY_MODERATE_AREA_M2 = 0.17
 CONFIDENCE_MODERATE_CAP = 0.25
 CONFIDENCE_SEVERE_CAP = 0.50
 
+# ---- frame-area heuristic severity thresholds ----
+FRAME_SEVERITY_MINOR_PCT = 2.0   # bbox area < 2% of frame → Minor
+FRAME_SEVERITY_SEVERE_PCT = 6.0  # bbox area > 6% of frame → Severe
+
 # ---- IPM defaults ----
 DEFAULT_NEAR_METERS = 3.0
 DEFAULT_FAR_METERS = 25.0
