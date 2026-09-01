@@ -2,84 +2,86 @@
 
 ## Overview
 
-SIPAT uses a fine-tuned YOLOv8n (nano) model for road distress detection. The model is trained on the RDD2022 dataset with Philippine urban road samples.
+SIPAT uses a fine-tuned YOLOv26n (nano) model for road distress detection. The model is trained on the RDD2022 dataset (38,383 images, 16 classes) exported from Roboflow.
 
 ## Model Architecture
 
-- **Base Model:** YOLOv8n (Nano) — 3.2M parameters, lightweight
+- **Base Model:** YOLOv26n (Nano)
 - **Input:** 640×640 RGB images
 - **Output:** Bounding boxes with class labels and confidence scores
-- **Classes:** D00, D10, D20, D40 (D43, D44 excluded in inference)
+- **Classes:** 16 classes including D00, D10, D20, D40, D43, D44, plus rotation variants and additional classes
 
 ## Dataset
 
 ### RDD2022 (Road Damage Detection 2022)
 
-- **Source:** https://github.com/sekilab/RoadDamageDetector
-- **Total Images:** ~26,000 (global), ~1,000+ (Philippine subset)
-- **Classes:**
+- **Source:** https://universe.roboflow.com/aleciofvjunior/rdd2022-zw12e
+- **Total Images:** 38,383
+- **Format:** YOLOv8
+- **Pre-processing:** Auto-orientation (EXIF-orientation stripping) + Resize to 640×640 (Stretch)
+- **Augmentation:** None applied
+- **Classes (16):**
 
-| Code | Description | Typical Size |
-|------|-------------|--------------|
-| D00 | Longitudinal crack | 5-50 cm width |
-| D10 | Transverse crack | 5-50 cm length |
-| D20 | Patching | 10-100 cm diameter |
-| D40 | Pothole | 10-80 cm diameter |
-| D43 | Crosswalk blur | (excluded) |
-| D44 | White line blur | (excluded) |
+| Code | Description |
+|------|-------------|
+| Block crack | Block-shaped crack pattern |
+| D00 | Longitudinal crack |
+| D00rotation | Longitudinal crack (rotated) |
+| D01 | Longitudinal crack variant |
+| D0w0 | Longitudinal crack variant |
+| D10 | Transverse crack |
+| D10rotation | Transverse crack (rotated) |
+| D11 | Transverse crack variant |
+| D20 | Patching |
+| D20rotation | Patching (rotated) |
+| D40 | Pothole |
+| D40rotation | Pothole (rotated) |
+| D43 | Crosswalk blur |
+| D44 | White line blur |
+| D50 | Non-rated distress |
+| Repair | Repaired surface |
 
 ### Data Preparation
 
-1. Download RDD2022 dataset from GitHub
-2. Extract Philippine urban road subset
-3. Convert annotations to YOLO format:
+1. Export RDD2022 dataset from Roboflow (https://app.roboflow.com/aleciofvjunior/rdd2022-zw12e/2)
+2. Dataset structure:
+   ```
+   RDD2022-2/
+   ├── train/images/
+   ├── valid/images/
+   ├── test/images/
+   └── data.yaml
+   ```
+3. Annotations in YOLOv8 format:
    ```
    class_id center_x center_y width height
-   ```
-4. Split into train/val/test (80/10/10)
-5. Create `dataset.yaml`:
-   ```yaml
-   path: ../datasets/rdd2022
-   train: train/images
-   val: val/images
-   names:
-     0: D00
-     1: D10
-     2: D20
-     3: D40
-     4: D43
-     5: D44
    ```
 
 ## Training Configuration
 
-### Hyperparameters
+### Hyperparameters (from model checkpoint)
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Epochs | 100 | Sufficient for convergence |
-| Batch Size | 16 | Fits in 8GB GPU memory |
-| Image Size | 640×640 | YOLOv8 default |
-| Learning Rate | 0.01 | Standard for fine-tuning |
-| Early Stopping | 20 epochs | Prevents overfitting |
+| Parameter | Value | Source |
+|-----------|-------|--------|
+| Epochs | 80 | model train_args |
+| Batch Size | 32 | model train_args |
+| Image Size | 640×640 | model train_args |
+| Learning Rate | 0.0054 | model train_args |
+| Early Stopping | 25 epochs | model train_args |
+| Optimizer | SGD | model train_args |
+| Device | Kaggle GPU | model train_args |
 
-### Augmentation
+### Training Platform
 
-| Augmentation | Value | Purpose |
-|--------------|-------|---------|
-| HSV-Hue | 0.015 | Color variation |
-| HSV-Saturation | 0.7 | Lighting variation |
-| HSV-Value | 0.4 | Brightness variation |
-| Translation | 0.1 | Position variation |
-| Scale | 0.5 | Size variation |
-| Mosaic | 1.0 | Context augmentation |
+- **Platform:** Kaggle
+- **Training Date:** 2026-06-27
+- **Output Path:** `/kaggle/working/SIPAT_Training/sipat_yolo26n_production`
 
 ### Why These Choices?
 
-1. **YOLOv8n (Nano):** Lightweight for mobile/edge deployment, fast inference
-2. **No rotation:** Road images have consistent orientation
-3. **No mixup:** Not needed for road distress (objects are small)
-4. **Mosaic enabled:** Helps detect small potholes by combining contexts
+1. **YOLOv26n (Nano):** Lightweight for mobile/edge deployment, fast inference
+2. **No augmentation:** Dataset already contains rotation variants covering orientation diversity
+3. **Batch size 32:** Maximizes GPU memory utilization on Kaggle
 
 ## Training Commands
 
@@ -88,7 +90,7 @@ SIPAT uses a fine-tuned YOLOv8n (nano) model for road distress detection. The mo
 ```bash
 cd sipat-ml
 python training/train.py --create-dataset
-python training/train.py --data dataset.yaml --epochs 100
+python training/train.py --data dataset.yaml --epochs 80
 ```
 
 ### Custom Training
@@ -96,12 +98,12 @@ python training/train.py --data dataset.yaml --epochs 100
 ```bash
 python training/train.py \
   --data dataset.yaml \
-  --model yolov8n.pt \
-  --epochs 100 \
-  --batch 16 \
+  --model yolo26n.pt \
+  --epochs 80 \
+  --batch 32 \
   --imgsz 640 \
-  --lr 0.01 \
-  --patience 20 \
+  --lr 0.0054 \
+  --patience 25 \
   --project runs/detect \
   --name sipat_v1
 ```
@@ -149,6 +151,6 @@ This is the model used by the inference pipeline.
 
 ## References
 
-1. **YOLOv8:** https://github.com/ultralytics/ultralytics
-2. **RDD2022:** https://github.com/sekilab/RoadDamageDetector
+1. **YOLOv26:** https://github.com/ultralytics/ultralytics
+2. **RDD2022 Dataset:** https://universe.roboflow.com/aleciofvjunior/rdd2022-zw12e
 3. **RDD2022 Paper:** "Road Damage Detection and Classification with YOLOv5 and EfficientDet" (2022)

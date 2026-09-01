@@ -1,0 +1,79 @@
+{
+  "benchmark": "upload_success_rate",
+  "results": {
+    "num_uploads_per_scenario": 200,
+    "scenarios": [
+      {
+        "num_uploads": 200,
+        "successes": 196,
+        "failures": 4,
+        "success_rate": 98.0,
+        "avg_retries": 0.02,
+        "max_retries_used": 1,
+        "retry_distribution": {
+          "0": 196
+        },
+        "avg_time_ms": 0.0,
+        "p95_time_ms": 0.0,
+        "scenario": "no_retry_low_failure",
+        "failure_rate": 0.02,
+        "max_retries": 0
+      },
+      {
+        "num_uploads": 200,
+        "successes": 185,
+        "failures": 15,
+        "success_rate": 92.5,
+        "avg_retries": 0.07,
+        "max_retries_used": 1,
+        "retry_distribution": {
+          "0": 185
+        },
+        "avg_time_ms": 0.0,
+        "p95_time_ms": 0.0,
+        "scenario": "no_retry_medium_failure",
+        "failure_rate": 0.1,
+        "max_retries": 0
+      },
+      {
+        "num_uploads": 200,
+        "successes": 200,
+        "failures": 0,
+        "success_rate": 100.0,
+        "avg_retries": 0.11,
+        "max_retries_used": 2,
+        "retry_distribution": {
+          "0": 179,
+          "1": 20,
+          "2": 1,
+          "3": 0
+        },
+        "avg_time_ms": 0.28,
+        "p95_time_ms": 2.51,
+        "scenario": "retry_3x_medium_failure",
+        "failure_rate": 0.1,
+        "max_retries": 3
+      },
+      {
+        "num_uploads": 200,
+        "successes": 200,
+        "failures": 0,
+        "success_rate": 100.0,
+        "avg_retries": 0.51,
+        "max_retries_used": 3,
+        "retry_distribution": {
+          "0": 133,
+          "1": 42,
+          "2": 16,
+          "3": 9
+        },
+        "avg_time_ms": 1.63,
+        "p95_time_ms": 7.25,
+        "scenario": "retry_3x_high_failure",
+        "failure_rate": 0.3,
+        "max_retries": 3
+      }
+    ],
+    "overall_success_rate": 100.0
+  }
+}

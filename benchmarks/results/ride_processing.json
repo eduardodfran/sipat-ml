@@ -1,0 +1,14 @@
+{
+  "benchmark": "ride_processing",
+  "model_path": "C:\\Users\\Wakin\\Main\\Projects\\sipat-app\\sipat-ml\\weights\\best.pt",
+  "config": {
+    "num_frames": 150,
+    "fps": 30.0
+  },
+  "results": {
+    "total_time_sec": 0.58,
+    "video_frames": 150,
+    "detections_found": 0,
+    "frames_per_second": 256.88
+  }
+}
