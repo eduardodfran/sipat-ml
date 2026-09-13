@@ -314,12 +314,20 @@ class RideProcessor:
                 new_total_hits = current_hits + new_hits
                 existing_area = match.get("median_area_m2") or pothole.get("median_area_m2") or pothole.get("max_area_m2")
                 new_caption = self._generate_caption(merged_sev, new_total_hits, existing_area)
+                reopen = {}
+                if (match.get("activity_status") or "active") == "fixed" and new_hits >= 3:
+                    reopen = {
+                        "activity_status": "active",
+                        "fixed_count": 0,
+                        "still_count": 0,
+                    }
                 client.schema("public").from_("verified_potholes").update({
                     "total_detection_hits": new_total_hits,
                     "worst_severity": merged_sev,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "user_detections": merged_users,
                     "caption": new_caption,
+                    **reopen,
                 }).eq("id", match_id).execute()
                 match["total_detection_hits"] = current_hits + new_hits
                 match["worst_severity"] = merged_sev
