@@ -81,6 +81,9 @@ def reverse_geocode(lat: float, lng: float) -> dict[str, str | None] | None:
             return None
 
         result = _extract_address_parts(data["address"])
+        # display_name sits at the top level of the response, not inside address
+        if isinstance(data.get("display_name"), str) and data["display_name"].strip():
+            result["formatted_address"] = data["display_name"].strip()
 
         # If we got nothing useful, return None
         if not any(result.values()):

@@ -5,8 +5,8 @@ the address columns (street, barangay, city, province, region, country,
 formatted_address, address_geocoded_at).
 
 Usage:
-    cd sipat-ml/processing
-    python -m scripts.backfill_addresses [--dry-run] [--limit N]
+    cd sipat-ml
+    python -m processing.scripts.backfill_addresses [--dry-run] [--limit N]
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Ensure parent package is importable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 load_dotenv()
 
-from services.supabase_client import SupabaseService  # noqa: E402
-from services.geocoder import reverse_geocode         # noqa: E402
+from processing.services.supabase_client import SupabaseService  # noqa: E402
+from processing.services.geocoder import reverse_geocode         # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
