@@ -225,3 +225,205 @@ class TestProcessEndpoints:
                 headers={"Authorization": "Bearer valid-token"},
             )
         assert response.status_code == 409
+
+
+def _pothole_row(**overrides):
+    row = {"id": 7, "ride_id": "ride-1", "caption": "Severe pothole detected.", "title": None, "description": None}
+    row.update(overrides)
+    return row
+
+
+class TestPotholeTextEdit:
+    def test_update_requires_auth(self, client):
+        response = client.put("/verified-potholes/7", json={"title": "Hi"})
+        assert response.status_code == 401
+
+    def test_update_not_found(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.return_value = []
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={"title": "Hi"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 404
+
+    def test_update_forbidden_for_non_owner(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.side_effect = [
+            [_pothole_row()],
+            [{"user_id": "other-user"}],
+        ]
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={"title": "Hi"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 403
+
+    def test_update_success_logs_history(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.side_effect = [
+            [_pothole_row()],
+            [{"user_id": "user-123"}],
+        ]
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={"title": "Malalim sa kanto", "description": "Near the waiting shed"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["title"] == "Malalim sa kanto"
+        assert data["description"] == "Near the waiting shed"
+        mock_svc.update.assert_called_once_with(
+            "verified_potholes",
+            {"title": "Malalim sa kanto", "description": "Near the waiting shed"},
+            id=7,
+        )
+        mock_svc.insert.assert_called_once()
+        history_kwargs = mock_svc.insert.call_args[0][1]
+        assert mock_svc.insert.call_args[0][0] == "title_history"
+        assert history_kwargs["post_type"] == "pothole"
+        assert history_kwargs["post_id"] == 7
+        assert history_kwargs["old_title"] is None
+
+    def test_update_caption_only_backward_compat(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.side_effect = [
+            [_pothole_row()],
+            [{"user_id": "user-123"}],
+        ]
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={"caption": "Custom caption"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 200
+        assert response.json()["caption"] == "Custom caption"
+        mock_svc.update.assert_called_once_with(
+            "verified_potholes", {"caption": "Custom caption"}, id=7
+        )
+
+    def test_update_empty_body_rejected(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.side_effect = [
+            [_pothole_row()],
+            [{"user_id": "user-123"}],
+        ]
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 422
+        mock_svc.update.assert_not_called()
+
+    def test_update_title_too_long_rejected(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={"title": "x" * 81},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 422
+        mock_svc.select.assert_not_called()
+
+
+def _photo_row(**overrides):
+    row = {"id": 9, "user_id": "user-123", "caption": None, "title": None, "description": None}
+    row.update(overrides)
+    return row
+
+
+class TestCommunityPhotoTextEdit:
+    def test_update_requires_auth(self, client):
+        response = client.put("/community-photos/9", json={"title": "Hi"})
+        assert response.status_code == 401
+
+    def test_update_not_found(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.return_value = []
+        with patch("processing.api.routes.community_photo.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/community-photos/9",
+                json={"title": "Hi"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 404
+
+    def test_update_forbidden_for_non_owner(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.return_value = [_photo_row(user_id="other-user")]
+        with patch("processing.api.routes.community_photo.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/community-photos/9",
+                json={"title": "Hi"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 403
+        mock_svc.update.assert_not_called()
+
+    def test_update_success_logs_history(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.return_value = [_photo_row()]
+        with patch("processing.api.routes.community_photo.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/community-photos/9",
+                json={"title": "Butas sa kanto", "description": "Malalim kapag umuulan"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["title"] == "Butas sa kanto"
+        mock_svc.update.assert_called_once_with(
+            "community_photos",
+            {"title": "Butas sa kanto", "description": "Malalim kapag umuulan"},
+            id=9,
+        )
+        mock_svc.insert.assert_called_once()
+        assert mock_svc.insert.call_args[0][0] == "title_history"
+        assert mock_svc.insert.call_args[0][1]["post_type"] == "photo"
+
+    def test_update_blank_clears_to_null(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.return_value = [_photo_row(title="Old title")]
+        with patch("processing.api.routes.community_photo.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/community-photos/9",
+                json={"title": "   "},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 200
+        assert response.json()["title"] is None
+        mock_svc.update.assert_called_once_with("community_photos", {"title": None}, id=9)
+
+    def test_update_description_too_long_rejected(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        with patch("processing.api.routes.community_photo.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/community-photos/9",
+                json={"description": "x" * 281},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 422
+        mock_svc.select.assert_not_called()

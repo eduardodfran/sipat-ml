@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import os
 import tempfile
@@ -12,9 +10,10 @@ from fastapi.concurrency import run_in_threadpool
 
 from ...config.settings import MODEL_PATH, COMMUNITY_PHOTO_YOLO_CONFIDENCE, EXCLUDED_CLASSES
 from ...core.severity import frame_area_pct_to_severity
-from ...rate_limiter import UPLOAD_LIMIT, limiter
+from ...rate_limiter import READ_LIMIT, UPLOAD_LIMIT, limiter
 from ...services.geocoder import reverse_geocode
 from ...services.supabase_client import get_supabase_service, PGRST204Error
+from .post_text import PostTextUpdate, log_text_edit, normalize_text_update
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["community-photo"])
@@ -24,6 +23,7 @@ COMMUNITY_PHOTO_COLUMNS = {
     "street", "barangay", "city", "province", "region", "country",
     "formatted_address", "address_geocoded_at", "detection_status",
     "worst_severity", "confidence", "class_name", "caption",
+    "title", "description",
     "created_at", "updated_at",
 }
 
@@ -219,3 +219,33 @@ async def upload_community_photo(
         "photo_id": photo_id,
         "image_url": image_url,
     }
+
+
+@router.put("/community-photos/{photo_id}")
+@limiter.limit(READ_LIMIT)
+async def update_community_photo_text(
+    request: Request,
+    photo_id: int,
+    body: PostTextUpdate,
+    authorization: str = Header(None),
+):
+    """Owner-only edit of title/description/caption on the author's own photo post."""
+    svc = get_supabase_service()
+    auth = svc.validate_token(authorization)
+    user_id = auth.get("user_id") or auth.get("sub")
+
+    rows = svc.select("community_photos", "id,user_id,caption,title,description", id=photo_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    photo = rows[0]
+    if photo.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="You can only edit titles and descriptions for your own posts")
+
+    updates = normalize_text_update(body)
+    if not updates:
+        raise HTTPException(status_code=422, detail="No editable fields provided")
+
+    log_text_edit(svc, post_type="photo", post_id=photo_id, user_id=user_id, old=photo, new_updates=updates)
+    svc.update("community_photos", updates, id=photo_id)
+    return {"status": "ok", **updates}
