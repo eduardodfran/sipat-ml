@@ -265,6 +265,35 @@ class TestPotholeTextEdit:
             )
         assert response.status_code == 403
 
+    def test_update_forbidden_for_orphan_no_ride(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.return_value = [_pothole_row(ride_id=None)]
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={"title": "Hi"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 403
+        mock_svc.update.assert_not_called()
+
+    def test_update_forbidden_for_orphan_missing_ride_row(self, client):
+        mock_svc = MagicMock()
+        mock_svc.validate_token.return_value = {"user_id": "user-123"}
+        mock_svc.select.side_effect = [
+            [_pothole_row()],
+            [],
+        ]
+        with patch("processing.api.routes.verified_potholes.get_supabase_service", return_value=mock_svc):
+            response = client.put(
+                "/verified-potholes/7",
+                json={"title": "Hi"},
+                headers={"Authorization": "Bearer valid-token"},
+            )
+        assert response.status_code == 403
+        mock_svc.update.assert_not_called()
+
     def test_update_success_logs_history(self, client):
         mock_svc = MagicMock()
         mock_svc.validate_token.return_value = {"user_id": "user-123"}

@@ -29,11 +29,16 @@ async def update_pothole_text(
         raise HTTPException(status_code=404, detail="Pothole not found")
 
     pothole = rows[0]
+    # Ownership must be provable via the first-detector ride. Orphan potholes
+    # (no ride, or ride row gone) are denied to everyone — including reporters.
     ride_id = pothole.get("ride_id")
+    ride_owner = None
     if ride_id:
         ride_rows = svc.select("rides_metadata", "user_id", id=ride_id)
-        if ride_rows and ride_rows[0].get("user_id") != user_id:
-            raise HTTPException(status_code=403, detail="You can only edit titles and descriptions for your own detections")
+        if ride_rows:
+            ride_owner = ride_rows[0].get("user_id")
+    if ride_owner != user_id:
+        raise HTTPException(status_code=403, detail="You can only edit titles and descriptions for your own detections")
 
     updates = normalize_text_update(body)
     if not updates:
